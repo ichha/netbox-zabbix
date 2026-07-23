@@ -286,13 +286,16 @@ class ZabbixHostsView(View):
 
         # Pre-build Proxy ID -> Name map for fast, error-free lookup
         proxy_map = {}
-        proxies = api.get_proxies()
-        if isinstance(proxies, list):
-            for p in proxies:
-                p_id = str(p.get("proxyid", ""))
-                p_name = p.get("name") or p.get("host")
-                if p_id and p_name:
-                    proxy_map[p_id] = p_name
+        try:
+            proxies = api.get_proxies()
+            if isinstance(proxies, list):
+                for p in proxies:
+                    p_id = str(p.get("proxyid", ""))
+                    p_name = p.get("name") or p.get("host")
+                    if p_id and p_name:
+                        proxy_map[p_id] = p_name
+        except Exception:
+            pass
             
         headers = ["Host Name", "Primary IP", "Protocol", "Port", "Monitored By", "Visible Name", "Status"]
         items = []

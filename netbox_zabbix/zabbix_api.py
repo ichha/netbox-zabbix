@@ -26,7 +26,7 @@ class ZabbixAPI:
             
         headers = {"Content-Type": "application/json-rpc"}
         try:
-            response = requests.post(self.url, json=payload, headers=headers, timeout=12)
+            response = requests.post(self.url, json=payload, headers=headers, timeout=15)
             response.raise_for_status()
             res_json = response.json()
             if "error" in res_json:
@@ -48,44 +48,44 @@ class ZabbixAPI:
 
     def get_proxies(self):
         return self.call("proxy.get", {
-            "output": "extend"
+            "output": ["proxyid", "name", "host", "operating_mode", "status", "state", "version", "lastaccess", "description"]
         })
 
     def get_proxy_groups(self):
         return self.call("proxygroup.get", {
-            "output": "extend"
+            "output": ["proxy_groupid", "name", "state", "description"]
         })
 
     def get_templates(self):
         return self.call("template.get", {
-            "output": "extend"
+            "output": ["templateid", "name", "host", "description"]
         })
 
     def get_template_groups(self):
         return self.call("templategroup.get", {
-            "output": "extend"
+            "output": ["groupid", "name"]
         })
 
     def get_macros(self):
         return self.call("usermacro.get", {
             "globalmacro": True,
-            "output": "extend"
+            "output": ["globalmacroid", "macro", "value", "description"]
         })
 
     def get_host_groups(self):
         return self.call("hostgroup.get", {
-            "output": "extend"
+            "output": ["groupid", "name"]
         })
 
     def get_hosts(self):
         return self.call("host.get", {
-            "output": "extend",
-            "selectInterfaces": "extend"
+            "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
+            "selectInterfaces": ["ip", "port", "type", "main"]
         })
 
     def get_tags(self):
-        hosts = self.call("host.get", {"output": ["hostid"], "selectTags": "extend"})
-        templates = self.call("template.get", {"output": ["templateid"], "selectTags": "extend"})
+        hosts = self.call("host.get", {"output": ["hostid"], "selectTags": ["tag", "value"]})
+        templates = self.call("template.get", {"output": ["templateid"], "selectTags": ["tag", "value"]})
         
         tags_set = set()
         if isinstance(hosts, list):
