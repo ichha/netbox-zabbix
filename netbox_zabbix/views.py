@@ -283,6 +283,16 @@ class ZabbixHostsView(View):
             return render(request, 'netbox_zabbix/zabbix_table.html', {
                 'title': 'Hosts', 'error': hosts["error"]
             })
+
+        # Pre-build Proxy ID -> Name map for fast, error-free lookup
+        proxy_map = {}
+        proxies = api.get_proxies()
+        if isinstance(proxies, list):
+            for p in proxies:
+                p_id = str(p.get("proxyid", ""))
+                p_name = p.get("name") or p.get("host")
+                if p_id and p_name:
+                    proxy_map[p_id] = p_name
             
         headers = ["Host Name", "Primary IP", "Protocol", "Port", "Monitored By", "Visible Name", "Status"]
         items = []
@@ -317,18 +327,11 @@ class ZabbixHostsView(View):
                         protocol_str = "Agent"
 
                 # 2. Monitored By / Proxy designation parsing
-                proxy_obj = h.get("proxy")
-                proxy_name = None
-                if isinstance(proxy_obj, dict):
-                    proxy_name = proxy_obj.get("name") or proxy_obj.get("host")
-                elif isinstance(proxy_obj, list) and len(proxy_obj) > 0 and isinstance(proxy_obj[0], dict):
-                    proxy_name = proxy_obj[0].get("name") or proxy_obj[0].get("host")
-                    
-                proxy_id = h.get("proxyid") or h.get("proxy_hostid")
+                proxy_id = str(h.get("proxyid") or h.get("proxy_hostid") or "0")
                 
-                if proxy_name:
-                    monitored_by_str = f"Proxy: {proxy_name}"
-                elif proxy_id and str(proxy_id) != "0":
+                if proxy_id != "0" and proxy_id in proxy_map:
+                    monitored_by_str = f"Proxy: {proxy_map[proxy_id]}"
+                elif proxy_id != "0":
                     monitored_by_str = f"Proxy (ID {proxy_id})"
                 else:
                     monitored_by_str = "Server"

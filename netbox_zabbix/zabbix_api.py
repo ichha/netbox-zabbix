@@ -26,7 +26,7 @@ class ZabbixAPI:
             
         headers = {"Content-Type": "application/json-rpc"}
         try:
-            response = requests.post(self.url, json=payload, headers=headers, timeout=10)
+            response = requests.post(self.url, json=payload, headers=headers, timeout=12)
             response.raise_for_status()
             res_json = response.json()
             if "error" in res_json:
@@ -80,8 +80,7 @@ class ZabbixAPI:
     def get_hosts(self):
         return self.call("host.get", {
             "output": "extend",
-            "selectInterfaces": "extend",
-            "selectProxy": "extend"
+            "selectInterfaces": "extend"
         })
 
     def get_tags(self):
