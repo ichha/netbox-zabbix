@@ -69,9 +69,17 @@ class ZabbixServersView(View):
         
         hosts = api.get_hosts()
         templates = api.get_templates()
+        proxies = api.get_proxies()
+        hostgroups = api.get_host_groups()
+        macros = api.get_macros()
+        tags = api.get_tags()
         
         host_count = len(hosts) if isinstance(hosts, list) else 0
         template_count = len(templates) if isinstance(templates, list) else 0
+        proxy_count = len(proxies) if isinstance(proxies, list) else 0
+        hostgroup_count = len(hostgroups) if isinstance(hostgroups, list) else 0
+        macro_count = len(macros) if isinstance(macros, list) else 0
+        tag_count = len(tags) if isinstance(tags, list) else 0
         
         context = {
             'zabbix_url': api.url,
@@ -81,6 +89,10 @@ class ZabbixServersView(View):
             'error': error,
             'host_count': host_count,
             'template_count': template_count,
+            'proxy_count': proxy_count,
+            'hostgroup_count': hostgroup_count,
+            'macro_count': macro_count,
+            'tag_count': tag_count,
         }
         return render(request, 'netbox_zabbix/zabbix_server.html', context)
 
