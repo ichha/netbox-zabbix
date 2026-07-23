@@ -4,20 +4,36 @@ from django.core.paginator import Paginator
 from .zabbix_api import ZabbixAPI
 
 
-def process_table_data(request, items, headers, title, default_per_page=25):
-    # 1. Quick search filtering across all columns
+def process_table_data(request, items, headers, title, default_per_page=50):
+    total_devices = len(items)
+
+    # Calculate active/monitored and inactive/unmonitored counts
+    synced_devices = 0
+    for row in items:
+        if any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row):
+            synced_devices += 1
+    devices_to_sync = total_devices - synced_devices
+
+    # Filter by status if requested
+    status_filter = request.GET.get('status', '').strip().lower()
+    if status_filter == 'synced' or status_filter == 'active':
+        items = [row for row in items if any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row)]
+    elif status_filter == 'pending' or status_filter == 'inactive':
+        items = [row for row in items if not any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row)]
+
+    # Quick search filtering across all columns
     q = request.GET.get('q', '').strip()
     if q:
         items = [row for row in items if any(q.lower() in str(cell).lower() for cell in row)]
 
-    total_count = len(items)
+    filtered_count = len(items)
 
-    # 2. Per page pagination configuration
+    # Per page pagination configuration
     per_page_param = request.GET.get('per_page', str(default_per_page))
     page_param = request.GET.get('page', '1')
 
     if per_page_param.lower() == 'all':
-        per_page = total_count if total_count > 0 else 1
+        per_page = filtered_count if filtered_count > 0 else 1
     else:
         try:
             per_page = int(per_page_param)
@@ -37,8 +53,11 @@ def process_table_data(request, items, headers, title, default_per_page=25):
         'title': title,
         'headers': headers,
         'page_obj': page_obj,
-        'per_page': per_page_param,
-        'total_count': total_count,
+        'per_page': per_page_param if per_page_param == 'all' else per_page,
+        'total_devices': total_devices,
+        'synced_devices': synced_devices,
+        'devices_to_sync': devices_to_sync,
+        'status_filter': status_filter,
         'q': q,
     }
 
@@ -265,7 +284,7 @@ class ZabbixHostsView(View):
                 'title': 'Hosts', 'error': hosts["error"]
             })
             
-        headers = ["Host ID", "Host Name", "Visible Name", "Status", "IP Address", "Port"]
+        headers = ["Host Name", "Primary IP", "Visible Name", "Status", "Port", "Zabbix Host ID"]
         items = []
         if isinstance(hosts, list):
             for h in hosts:
@@ -279,12 +298,12 @@ class ZabbixHostsView(View):
                     port_str = interfaces[0].get("port", "-") or "-"
                     
                 items.append([
-                    h.get("hostid", "-"),
                     h.get("host", "-"),
+                    ip_str,
                     h.get("name") or h.get("host") or "-",
                     status_str,
-                    ip_str,
-                    port_str
+                    port_str,
+                    h.get("hostid", "-")
                 ])
                 
         context = process_table_data(request, items, headers, 'Hosts')

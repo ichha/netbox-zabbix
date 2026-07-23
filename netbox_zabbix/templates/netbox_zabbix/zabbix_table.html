@@ -1,122 +1,195 @@
 {% extends 'base/layout.html' %}
 
-{% block header %}
-<div class="d-flex justify-content-between align-items-center my-3">
-    <div>
-        <nav aria-label="breadcrumb">
-            <ol class="breadcrumb mb-1">
-                <li class="breadcrumb-item"><a href="{% url 'home' %}">Home</a></li>
-                <li class="breadcrumb-item"><a href="{% url 'plugins:netbox_zabbix:servers' %}">Zabbix</a></li>
-                <li class="breadcrumb-item active" aria-current="page">{{ title }}</li>
-            </ol>
-        </nav>
-        <h1 class="h2 mb-0">Zabbix {{ title }}</h1>
-    </div>
-    <div>
-        <span class="badge bg-primary fs-6">{{ total_count }} Total</span>
-    </div>
-</div>
-{% endblock %}
+{% block title %}Zabbix {{ title }}{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col col-md-12">
-        <!-- Search and Controls Bar -->
-        <div class="card mb-3">
-            <div class="card-body p-2">
-                <form method="get" class="row g-2 align-items-center">
-                    <div class="col-md-6 col-sm-8">
-                        <div class="input-group">
-                            <span class="input-group-text"><i class="mdi mdi-magnify"></i></span>
-                            <input type="text" name="q" class="form-control" placeholder="Search {{ title }}..." value="{{ q }}">
-                            {% if q %}
-                                <a href="?per_page={{ per_page }}" class="btn btn-outline-secondary" title="Clear Search">
-                                    <i class="mdi mdi-close"></i>
-                                </a>
-                            {% endif %}
-                            <button type="submit" class="btn btn-primary">Search</button>
-                        </div>
-                    </div>
-                    
-                    <div class="col-md-6 col-sm-4 d-flex justify-content-end align-items-center">
-                        <label class="form-label me-2 mb-0 text-muted small">Per Page:</label>
-                        <select name="per_page" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
-                            <option value="25" {% if per_page == "25" %}selected{% endif %}>25</option>
-                            <option value="50" {% if per_page == "50" %}selected{% endif %}>50</option>
-                            <option value="100" {% if per_page == "100" %}selected{% endif %}>100</option>
-                            <option value="250" {% if per_page == "250" %}selected{% endif %}>250</option>
-                            <option value="all" {% if per_page == "all" %}selected{% endif %}>All</option>
-                        </select>
-                    </div>
-                </form>
+<!-- Top Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <a href="?{% if q %}q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if not status_filter %}border border-primary border-2{% else %}border-0{% endif %}" title="Click to view all items">
+            <div class="card-body d-flex align-items-center">
+                <div class="avatar bg-primary text-white p-3 rounded-circle me-3">
+                    <i class="mdi mdi-server fs-2"></i>
+                </div>
+                <div>
+                    <div class="fs-6 text-muted text-uppercase fw-semibold">Total {{ title }}</div>
+                    <div class="fs-2 fw-bold text-primary">{{ total_devices }}</div>
+                    <div class="fs-7 text-muted">All configured Zabbix {{ title|lower }}</div>
+                </div>
             </div>
-        </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="?status=synced{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'synced' %}border border-success border-2{% else %}border-0{% endif %}" title="Click to view active items">
+            <div class="card-body d-flex align-items-center">
+                <div class="avatar bg-success text-white p-3 rounded-circle me-3">
+                    <i class="mdi mdi-check-circle fs-2"></i>
+                </div>
+                <div>
+                    <div class="fs-6 text-muted text-uppercase fw-semibold">Active / Monitored</div>
+                    <div class="fs-2 fw-bold text-success">{{ synced_devices }}</div>
+                    <div class="fs-7 text-muted">Monitored in Zabbix (Click to filter)</div>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="?status=pending{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'pending' %}border border-danger border-2{% else %}border-0{% endif %}" title="Click to view unmonitored items">
+            <div class="card-body d-flex align-items-center">
+                <div class="avatar bg-danger text-white p-3 rounded-circle me-3">
+                    <i class="mdi mdi-sync-alert fs-2"></i>
+                </div>
+                <div>
+                    <div class="fs-6 text-muted text-uppercase fw-semibold">Unmonitored / Offline</div>
+                    <div class="fs-2 fw-bold text-danger">{{ devices_to_sync }}</div>
+                    <div class="fs-7 text-muted">Disabled or offline (Click to filter)</div>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
 
-        <!-- Table Display Card -->
-        <div class="card">
-            <div class="card-body p-0">
-                {% if error %}
-                    <div class="alert alert-danger m-3" role="alert">
-                        <i class="mdi mdi-alert-circle me-1"></i>
-                        <strong>Failed to connect to Zabbix API:</strong> {{ error }}
-                    </div>
-                {% elif page_obj.object_list %}
-                    <div class="table-responsive">
-                        <table class="table table-hover table-striped align-middle mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    {% for col in headers %}
-                                        <th>{{ col }}</th>
-                                    {% endfor %}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for row in page_obj.object_list %}
-                                    <tr>
-                                        {% for cell in row %}
-                                            <td>
-                                                {% if cell == "Monitored" or cell == "Online" or cell == "Active" %}
-                                                    <span class="badge bg-success">{{ cell }}</span>
-                                                {% elif cell == "Unmonitored" or cell == "Offline" or cell == "Passive" %}
-                                                    <span class="badge bg-secondary">{{ cell }}</span>
-                                                {% elif cell|slice:":2" == "7." or cell|slice:":2" == "6." %}
-                                                    <span class="badge bg-info">{{ cell }}</span>
-                                                {% else %}
-                                                    {{ cell }}
-                                                {% endif %}
-                                            </td>
-                                        {% endfor %}
-                                    </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                {% else %}
-                    <div class="text-center p-5 text-muted">
-                        <i class="mdi mdi-tray-alert display-6 d-block mb-2"></i>
-                        No {{ title|lower }} found.
-                    </div>
+<!-- Search & Filter Bar -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <form method="get" class="row g-2 align-items-center">
+            {% if status_filter %}
+                <input type="hidden" name="status" value="{{ status_filter }}" />
+            {% endif %}
+            <div class="col-auto">
+                <label for="search-input" class="fw-semibold text-muted col-form-label">Search {{ title }}:</label>
+            </div>
+            <div class="col-auto flex-grow-1" style="max-width: 400px;">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text"><i class="mdi mdi-magnify"></i></span>
+                    <input type="text" id="search-input" name="q" class="form-control form-control-sm" placeholder="Type keyword to filter..." value="{{ q }}">
+                    {% if q %}
+                        <a href="?{% if status_filter %}status={{ status_filter }}{% endif %}" class="btn btn-sm btn-outline-secondary" title="Clear Search">
+                            <i class="mdi mdi-close"></i>
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-sm btn-primary">Filter</button>
+                {% if q or status_filter %}
+                    <a href="?" class="btn btn-sm btn-outline-secondary ms-1">Reset Filters</a>
                 {% endif %}
             </div>
+            <div class="col-auto ms-auto">
+                <span class="badge bg-light text-dark border">
+                    <i class="mdi mdi-filter-check me-1"></i>
+                    {% if status_filter == 'synced' %}
+                        Showing Active / Monitored {{ title }}
+                    {% elif status_filter == 'pending' %}
+                        Showing Unmonitored / Offline {{ title }}
+                    {% else %}
+                        Showing All Zabbix {{ title }}
+                    {% endif %}
+                </span>
+            </div>
+        </form>
+    </div>
+</div>
 
-            <!-- NetBox Pagination Footer -->
-            {% if page_obj.paginator.num_pages > 1 %}
-                <div class="card-footer d-flex justify-content-between align-items-center py-2">
-                    <div class="text-muted small">
-                        Displaying {{ page_obj.start_index }}&ndash;{{ page_obj.end_index }} of {{ total_count }} {{ title }}
-                    </div>
+<!-- Table Card -->
+<div class="card">
+    <div class="table-responsive">
+        {% if error %}
+            <div class="alert alert-danger m-3" role="alert">
+                <i class="mdi mdi-alert-circle me-1"></i>
+                <strong>Failed to connect to Zabbix API:</strong> {{ error }}
+            </div>
+        {% elif page_obj.object_list %}
+            <table class="table table-hover table-headings align-middle mb-0">
+                <thead>
+                    <tr>
+                        {% for col in headers %}
+                            <th>{{ col }}</th>
+                        {% endfor %}
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in page_obj.object_list %}
+                        <tr>
+                            {% for cell in row %}
+                                <td>
+                                    {% if cell == "Monitored" or cell == "Online" or cell == "Active" %}
+                                        <span class="badge bg-success text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
+                                            <i class="mdi mdi-check-circle me-1"></i> {{ cell }}
+                                        </span>
+                                    {% elif cell == "Unmonitored" or cell == "Offline" or cell == "Passive" %}
+                                        <span class="badge bg-danger text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
+                                            <i class="mdi mdi-alert-circle me-1"></i> {{ cell }}
+                                        </span>
+                                    {% elif forloop.counter == 1 %}
+                                        <span class="fw-bold text-primary">{{ cell }}</span>
+                                    {% elif forloop.counter == 2 and cell|slice:":3" == "10." or cell|slice:":3" == "172" or cell|slice:":2" == "19" %}
+                                        <code class="fw-bold fs-7">{{ cell }}</code>
+                                    {% elif cell|slice:":2" == "7." or cell|slice:":2" == "6." %}
+                                        <span class="badge bg-info text-dark fw-bold" style="font-size: 0.82rem;">{{ cell }}</span>
+                                    {% else %}
+                                        {{ cell }}
+                                    {% endif %}
+                                </td>
+                            {% endfor %}
+                            <td class="text-end">
+                                <span class="btn btn-sm btn-outline-success disabled fw-bold" style="font-size: 0.82rem;">
+                                    <i class="mdi mdi-check me-1"></i> Synced
+                                </span>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div class="text-center text-muted py-5">
+                <i class="mdi mdi-information-outline fs-3 d-block mb-1"></i>
+                No {{ title|lower }} found matching your criteria.
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Pagination Controls Footer -->
+    {% if total_devices > 0 %}
+        <div class="card-footer d-flex justify-content-between align-items-center py-2 flex-wrap">
+            <div class="text-muted fs-7">
+                Showing {{ page_obj.start_index }} to {{ page_obj.end_index }} of {{ page_obj.paginator.count }} {{ title|lower }}
+            </div>
+
+            <div class="d-flex align-items-center gap-3">
+                <!-- Items per page selector -->
+                <form method="get" class="d-flex align-items-center gap-1">
+                    {% if status_filter %}
+                        <input type="hidden" name="status" value="{{ status_filter }}" />
+                    {% endif %}
+                    {% if q %}
+                        <input type="hidden" name="q" value="{{ q }}" />
+                    {% endif %}
+                    <span class="fs-7 text-muted">Per page:</span>
+                    <select name="per_page" class="form-select form-select-sm" style="width: auto;" onchange="this.form.submit()">
+                        <option value="25" {% if per_page == 25 or per_page == "25" %}selected{% endif %}>25</option>
+                        <option value="50" {% if per_page == 50 or per_page == "50" %}selected{% endif %}>50</option>
+                        <option value="100" {% if per_page == 100 or per_page == "100" %}selected{% endif %}>100</option>
+                        <option value="250" {% if per_page == 250 or per_page == "250" %}selected{% endif %}>250</option>
+                        <option value="500" {% if per_page == 500 or per_page == "500" %}selected{% endif %}>500</option>
+                    </select>
+                </form>
+
+                <!-- Page navigation -->
+                {% if page_obj.has_other_pages %}
                     <nav aria-label="Table pagination">
                         <ul class="pagination pagination-sm mb-0">
                             {% if page_obj.has_previous %}
                                 <li class="page-item">
-                                    <a class="page-link" href="?page=1&per_page={{ per_page }}&q={{ q }}">First</a>
+                                    <a class="page-link" href="?page=1{% if status_filter %}&status={{ status_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}&per_page={{ per_page }}">First</a>
                                 </li>
                                 <li class="page-item">
-                                    <a class="page-link" href="?page={{ page_obj.previous_page_number }}&per_page={{ per_page }}&q={{ q }}">Prev</a>
+                                    <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}&per_page={{ per_page }}">Previous</a>
                                 </li>
                             {% else %}
-                                <li class="page-item disabled"><span class="page-link">First</span></li>
-                                <li class="page-item disabled"><span class="page-link">Prev</span></li>
+                                <li class="page-item disabled"><span class="page-link">Previous</span></li>
                             {% endif %}
 
                             <li class="page-item active">
@@ -125,20 +198,19 @@
 
                             {% if page_obj.has_next %}
                                 <li class="page-item">
-                                    <a class="page-link" href="?page={{ page_obj.next_page_number }}&per_page={{ per_page }}&q={{ q }}">Next</a>
+                                    <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}&per_page={{ per_page }}">Next</a>
                                 </li>
                                 <li class="page-item">
-                                    <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}&per_page={{ per_page }}&q={{ q }}">Last</a>
+                                    <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if status_filter %}&status={{ status_filter }}{% endif %}{% if q %}&q={{ q }}{% endif %}&per_page={{ per_page }}">Last</a>
                                 </li>
                             {% else %}
                                 <li class="page-item disabled"><span class="page-link">Next</span></li>
-                                <li class="page-item disabled"><span class="page-link">Last</span></li>
                             {% endif %}
                         </ul>
                     </nav>
-                </div>
-            {% endif %}
+                {% endif %}
+            </div>
         </div>
-    </div>
+    {% endif %}
 </div>
 {% endblock %}
