@@ -3,6 +3,16 @@
 {% block title %}Zabbix {{ title }}{% endblock %}
 
 {% block content %}
+<!-- Flash Messages Notification Banner -->
+{% if messages %}
+    {% for message in messages %}
+        <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show mb-3" role="alert">
+            <i class="mdi mdi-information me-1"></i> {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    {% endfor %}
+{% endif %}
+
 <!-- Top Summary Cards -->
 {% if has_status %}
     <div class="row mb-4">
@@ -140,7 +150,26 @@
                         <tr>
                             {% for cell in row %}
                                 <td>
-                                    {% if cell == "Monitored" or cell == "Online" or cell == "Active" %}
+                                    {% if cell.type == "role_badge" %}
+                                        <span class="badge text-white" style="background-color: #{{ cell.color }}; font-weight: 600; font-size: 0.85rem; border: 1px solid rgba(0,0,0,0.15);">
+                                            {{ cell.name }}
+                                        </span>
+                                    {% elif cell.type == "synced" %}
+                                        <span class="badge bg-success text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
+                                            <i class="mdi mdi-check-circle me-1"></i> Synced
+                                        </span>
+                                    {% elif cell.type == "sync_button" %}
+                                        <form action="{% url 'plugins:netbox_zabbix:sync_role' %}" method="post" class="d-inline">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="host_id" value="{{ cell.host_id }}" />
+                                            <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
+                                            <button type="submit" class="btn btn-sm btn-primary fw-bold text-white px-2 py-1" style="font-size: 0.82rem;" title="Create Host Group in Zabbix & Assign to Host">
+                                                <i class="mdi mdi-cloud-upload me-1"></i> Sync Role
+                                            </button>
+                                        </form>
+                                    {% elif cell.type == "none" %}
+                                        <span class="text-muted small">&mdash;</span>
+                                    {% elif cell == "Monitored" or cell == "Online" or cell == "Active" %}
                                         <span class="badge bg-success text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
                                             <i class="mdi mdi-check-circle me-1"></i> {{ cell }}
                                         </span>

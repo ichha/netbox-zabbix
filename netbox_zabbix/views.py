@@ -1,7 +1,11 @@
 from django.views.generic import View
-from django.shortcuts import render
+from django.shortcuts import render, redirect
+from django.contrib import messages
 from django.core.paginator import Paginator
+import logging
 from .zabbix_api import ZabbixAPI
+
+logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
 
 def process_table_data(request, items, headers, title, default_per_page=50, has_status=True):
@@ -16,7 +20,6 @@ def process_table_data(request, items, headers, title, default_per_page=50, has_
                 synced_devices += 1
         devices_to_sync = total_devices - synced_devices
 
-        # Filter by status if requested
         status_filter = request.GET.get('status', '').strip().lower()
         if status_filter == 'synced' or status_filter == 'active':
             items = [row for row in items if any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row)]
@@ -25,14 +28,12 @@ def process_table_data(request, items, headers, title, default_per_page=50, has_
     else:
         status_filter = ""
 
-    # Quick search filtering across all columns
     q = request.GET.get('q', '').strip()
     if q:
         items = [row for row in items if any(q.lower() in str(cell).lower() for cell in row)]
 
     filtered_count = len(items)
 
-    # Per page pagination configuration
     per_page_param = request.GET.get('per_page', str(default_per_page))
     page_param = request.GET.get('page', '1')
 
@@ -310,44 +311,51 @@ class ZabbixHostsView(View):
                         proxy_map[p_id] = p_name
         except Exception:
             pass
-            
-        headers = ["Host Name", "Primary IP", "Protocol", "Port", "Monitored By", "Visible Name", "Status"]
+
+        # Query NetBox Device objects for Role comparison
+        netbox_devices = {}
+        netbox_ip_map = {}
+        try:
+            from dcim.models import Device
+            for d in Device.objects.select_related('role', 'primary_ip4', 'primary_ip6').all():
+                if d.name:
+                    netbox_devices[d.name.lower()] = d
+                if d.primary_ip4:
+                    ip_clean = str(d.primary_ip4.address).split('/')[0]
+                    netbox_ip_map[ip_clean] = d
+        except Exception as e:
+            logger.error(f"Error querying NetBox devices: {e}")
+
+        headers = ["Host Name", "Primary IP", "NetBox Device Role", "Zabbix Hostgroups", "Protocol", "Monitored By", "Role Sync"]
         items = []
         if isinstance(hosts, list):
             for h in hosts:
+                h_name = h.get("host", "-")
+                v_name = h.get("name", "") or h_name
+                host_id = h.get("hostid")
                 status_str = "Monitored" if str(h.get("status")) == "0" else "Unmonitored"
-                
-                # 1. Interface & Protocol parsing
+
+                # 1. Interface & Protocol
                 interfaces = h.get("interfaces", [])
                 ip_str = "-"
                 port_str = "-"
                 protocol_str = "Agent"
-                
                 if isinstance(interfaces, list) and len(interfaces) > 0:
                     main_iface = interfaces[0]
                     for iface in interfaces:
                         if str(iface.get("main")) == "1":
                             main_iface = iface
                             break
-                    
                     ip_str = main_iface.get("ip", "-") or "-"
                     port_str = main_iface.get("port", "-") or "-"
-                    
                     if_type = str(main_iface.get("type", "1"))
-                    if if_type == "2":
-                        protocol_str = "SNMP"
-                    elif if_type == "3":
-                        protocol_str = "IPMI"
-                    elif if_type == "4":
-                        protocol_str = "JMX"
-                    else:
-                        protocol_str = "Agent"
+                    protocol_str = "SNMP" if if_type == "2" else "IPMI" if if_type == "3" else "JMX" if if_type == "4" else "Agent"
 
-                # 2. Monitored By / Proxy designation parsing
+                # 2. Monitored By / Proxy designation
                 proxy_id = str(h.get("proxyid") or "0")
                 proxy_group_id = str(h.get("proxy_groupid") or "0")
                 monitored_by = str(h.get("monitored_by") or "0")
-                
+
                 if (monitored_by == "1" or proxy_id != "0") and proxy_id in proxy_map:
                     monitored_by_str = f"Proxy: {proxy_map[proxy_id]}"
                 elif proxy_id != "0":
@@ -357,15 +365,88 @@ class ZabbixHostsView(View):
                 else:
                     monitored_by_str = "Server"
 
+                # 3. Zabbix Hostgroups assigned
+                zabbix_groups = h.get("hostgroups", []) or h.get("groups", [])
+                zabbix_group_names = [g.get("name") for g in zabbix_groups if isinstance(g, dict) and g.get("name")]
+                zabbix_group_disp = ", ".join(zabbix_group_names) if zabbix_group_names else "-"
+
+                # 4. NetBox Device Role matching
+                nb_device = netbox_devices.get(h_name.lower()) or netbox_devices.get(v_name.lower()) or netbox_ip_map.get(ip_str)
+                nb_role_name = "-"
+                role_color = "4b5563"
+                role_synced = False
+
+                if nb_device and nb_device.role:
+                    nb_role_name = nb_device.role.name
+                    role_color = getattr(nb_device.role, 'color', '4b5563') or '4b5563'
+                    role_synced = any(nb_role_name.lower() == zg.lower() for zg in zabbix_group_names)
+
+                # Format Role Sync action / badge cell
+                if not nb_device or nb_role_name == "-":
+                    sync_cell = {"type": "none", "text": "No Role"}
+                elif role_synced:
+                    sync_cell = {"type": "synced", "text": "Synced"}
+                else:
+                    sync_cell = {
+                        "type": "sync_button",
+                        "host_id": host_id,
+                        "role_name": nb_role_name,
+                        "host_name": h_name
+                    }
+
                 items.append([
-                    h.get("host", "-"),
+                    h_name,
                     ip_str,
+                    {"type": "role_badge", "name": nb_role_name, "color": role_color},
+                    zabbix_group_disp,
                     protocol_str,
-                    port_str,
                     monitored_by_str,
-                    h.get("name") or h.get("host") or "-",
-                    status_str
+                    sync_cell
                 ])
                 
         context = process_table_data(request, items, headers, 'Hosts', has_status=True)
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
+
+
+class ZabbixSyncRoleView(View):
+    def post(self, request):
+        host_id = request.POST.get('host_id')
+        role_name = request.POST.get('role_name')
+        
+        if not host_id or not role_name:
+            messages.error(request, "Missing host ID or NetBox Device Role name.")
+            return redirect('plugins:netbox_zabbix:hosts')
+            
+        api = ZabbixAPI()
+        
+        # 1. Check if Zabbix Host Group exists
+        groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
+        group_id = None
+        
+        if isinstance(groups, list) and len(groups) > 0:
+            group_id = groups[0].get("groupid")
+        else:
+            # Create the Host Group in Zabbix
+            create_res = api.call("hostgroup.create", {"name": role_name})
+            if isinstance(create_res, dict) and "groupids" in create_res and len(create_res["groupids"]) > 0:
+                group_id = create_res["groupids"][0]
+            elif isinstance(create_res, dict) and "error" in create_res:
+                messages.error(request, f"Failed to create Zabbix Host Group '{role_name}': {create_res['error']}")
+                return redirect('plugins:netbox_zabbix:hosts')
+                
+        if not group_id:
+            messages.error(request, f"Could not create or find Zabbix Host Group '{role_name}'.")
+            return redirect('plugins:netbox_zabbix:hosts')
+            
+        # 2. Assign Host Group to Host in Zabbix using host.massadd
+        mass_res = api.call("host.massadd", {
+            "hosts": [{"hostid": host_id}],
+            "groups": [{"groupid": group_id}]
+        })
+        
+        if isinstance(mass_res, dict) and "error" in mass_res:
+            messages.error(request, f"Failed to assign Host Group in Zabbix: {mass_res['error']}")
+        else:
+            messages.success(request, f"Successfully created/assigned Zabbix Host Group '{role_name}' for host ID {host_id}!")
+            
+        return redirect('plugins:netbox_zabbix:hosts')

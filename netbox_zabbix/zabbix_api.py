@@ -68,7 +68,6 @@ class ZabbixAPI:
         return res
 
     def get_proxy_groups(self):
-        # Introduced in Zabbix 7.0+
         return self.call("proxygroup.get", {
             "output": ["proxy_groupid", "name", "state", "description"]
         })
@@ -79,12 +78,10 @@ class ZabbixAPI:
         })
 
     def get_template_groups(self):
-        # Zabbix 6.4+ / 7.0+
         res = self.call("templategroup.get", {
             "output": ["groupid", "name"]
         })
         if isinstance(res, dict) and "error" in res:
-            # Fallback to hostgroup for older versions
             res = self.call("hostgroup.get", {
                 "output": ["groupid", "name"]
             })
@@ -102,16 +99,18 @@ class ZabbixAPI:
         })
 
     def get_hosts(self):
-        # 1. Zabbix 7.0+ / 7.2+ / 8.0+ schema
+        # 1. Zabbix 7.0+ schema with selectHostGroups
         res = self.call("host.get", {
             "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-            "selectInterfaces": ["ip", "port", "type", "main"]
+            "selectInterfaces": ["ip", "port", "type", "main"],
+            "selectHostGroups": ["groupid", "name"]
         })
         if isinstance(res, dict) and "error" in res:
-            # 2. Fallback for older Zabbix schemas
+            # 2. Fallback using selectGroups for older Zabbix releases
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
-                "selectInterfaces": ["ip", "port", "type", "main"]
+                "selectInterfaces": ["ip", "port", "type", "main"],
+                "selectGroups": ["groupid", "name"]
             })
         return res
 

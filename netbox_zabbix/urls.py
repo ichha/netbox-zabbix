@@ -11,4 +11,5 @@ urlpatterns = [
     path('tags/', views.ZabbixTagsView.as_view(), name='tags'),
     path('hostgroups/', views.ZabbixHostGroupsView.as_view(), name='hostgroups'),
     path('hosts/', views.ZabbixHostsView.as_view(), name='hosts'),
+    path('sync-role/', views.ZabbixSyncRoleView.as_view(), name='sync_role'),
 ]
