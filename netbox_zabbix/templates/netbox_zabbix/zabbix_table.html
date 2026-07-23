@@ -167,8 +167,16 @@
                                                 <i class="mdi mdi-cloud-upload me-1"></i> Sync Role
                                             </button>
                                         </form>
+                                    {% elif cell.type == "create_group_button" %}
+                                        <form action="{% url 'plugins:netbox_zabbix:create_hostgroup' %}" method="post" class="d-inline">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
+                                            <button type="submit" class="btn btn-sm btn-primary fw-bold text-white px-2 py-1" style="font-size: 0.82rem;" title="Create Host Group in Zabbix">
+                                                <i class="mdi mdi-cloud-upload me-1"></i> Sync Hostgroup
+                                            </button>
+                                        </form>
                                     {% elif cell.type == "none" %}
-                                        <span class="text-muted small">&mdash;</span>
+                                        <span class="text-muted small">{{ cell.text|default:"&mdash;" }}</span>
                                     {% elif cell == "Monitored" or cell == "Online" or cell == "Active" %}
                                         <span class="badge bg-success text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
                                             <i class="mdi mdi-check-circle me-1"></i> {{ cell }}

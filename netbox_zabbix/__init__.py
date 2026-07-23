@@ -2,13 +2,17 @@ from netbox.plugins import PluginConfig
 
 class NetBoxZabbixConfig(PluginConfig):
     name = 'netbox_zabbix'
-    verbose_name = 'Zabbix'
-    description = 'Zabbix Integration Plugin'
+    label = 'netbox_zabbix'
+    verbose_name = 'Zabbix Integration'
+    description = 'A NetBox plugin to synchronize data with Zabbix.'
     version = '0.1.0'
-    author = 'Antigravity'
-    author_email = 'antigravity@example.com'
     base_url = 'zabbix'
-    default_settings = {}
-    required_settings = []
+
+    def ready(self):
+        super().ready()
+        try:
+            import netbox_zabbix.signals  # noqa: F401
+        except Exception:
+            pass
 
 config = NetBoxZabbixConfig

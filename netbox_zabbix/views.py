@@ -276,40 +276,63 @@ class ZabbixHostGroupsView(View):
                 'title': 'Host Groups', 'error': zabbix_groups["error"]
             })
 
-        # Fetch NetBox Device Roles for comparison
-        netbox_roles_map = {}
+        # Fetch Zabbix groups dictionary
+        zabbix_group_map = {}
+        if isinstance(zabbix_groups, list):
+            for g in zabbix_groups:
+                g_name = g.get("name", "").strip()
+                if g_name:
+                    zabbix_group_map[g_name.lower()] = g
+
+        # Fetch NetBox Device Roles
+        netbox_roles = []
         try:
             from dcim.models import DeviceRole
-            for r in DeviceRole.objects.all():
-                if r.name:
-                    netbox_roles_map[r.name.strip().lower()] = r
+            netbox_roles = list(DeviceRole.objects.all())
         except Exception as e:
             logger.error(f"Error fetching NetBox DeviceRoles: {e}")
 
         headers = ["Group ID", "Zabbix Host Group Name", "NetBox Device Role", "Sync Status"]
         items = []
+        processed_zabbix_lower = set()
 
+        # 1. Process NetBox Device Roles first (Plain text, no color!)
+        for role in netbox_roles:
+            r_name = role.name
+            r_lower = r_name.strip().lower()
+
+            if r_lower in zabbix_group_map:
+                zg = zabbix_group_map[r_lower]
+                gid = zg.get("groupid", "-")
+                processed_zabbix_lower.add(r_lower)
+                status_cell = {"type": "synced", "text": "Synced"}
+                zg_name_disp = zg.get("name", r_name)
+            else:
+                gid = "—"
+                zg_name_disp = "—"
+                status_cell = {
+                    "type": "create_group_button",
+                    "role_name": r_name
+                }
+
+            items.append([
+                gid,
+                zg_name_disp,
+                r_name,  # Plain text, no color badge!
+                status_cell
+            ])
+
+        # 2. Add remaining Zabbix Host Groups that are not NetBox Device Roles
         if isinstance(zabbix_groups, list):
             for g in zabbix_groups:
-                gid = g.get("groupid", "-")
-                g_name = g.get("name", "-")
-                g_lower = g_name.strip().lower()
-
-                if g_lower in netbox_roles_map:
-                    role_obj = netbox_roles_map[g_lower]
-                    r_color = getattr(role_obj, 'color', '4b5563') or '4b5563'
-                    role_cell = {"type": "role_badge", "name": role_obj.name, "color": r_color}
-                    status_cell = {"type": "synced", "text": "Synced"}
-                else:
-                    role_cell = {"type": "none", "text": "Not in NetBox"}
-                    status_cell = {"type": "none", "text": "Zabbix Only"}
-
-                items.append([
-                    gid,
-                    g_name,
-                    role_cell,
-                    status_cell
-                ])
+                g_name = g.get("name", "")
+                if g_name.strip().lower() not in processed_zabbix_lower:
+                    items.append([
+                        g.get("groupid", "-"),
+                        g_name,
+                        "—",
+                        {"type": "none", "text": "Zabbix Only"}
+                    ])
 
         context = process_table_data(request, items, headers, 'Host Groups', has_status=False)
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
@@ -332,7 +355,7 @@ class ZabbixCreateHostGroupView(View):
             
         create_res = api.call("hostgroup.create", {"name": role_name})
         if isinstance(create_res, dict) and "groupids" in create_res and len(create_res["groupids"]) > 0:
-            messages.success(request, f"Successfully created Zabbix Host Group '{role_name}' (ID {create_res['groupids'][0]})!")
+            messages.success(request, f"Successfully created Host Group '{role_name}' in Zabbix (ID {create_res['groupids'][0]})!")
         elif isinstance(create_res, dict) and "error" in create_res:
             messages.error(request, f"Failed to create Host Group in Zabbix: {create_res['error']}")
         else:
@@ -425,15 +448,13 @@ class ZabbixHostsView(View):
                 # 4. NetBox Device Role matching
                 nb_device = netbox_devices.get(h_name.lower()) or netbox_devices.get(v_name.lower()) or netbox_ip_map.get(ip_str)
                 nb_role_name = "-"
-                role_color = "4b5563"
                 role_synced = False
 
                 if nb_device and nb_device.role:
                     nb_role_name = nb_device.role.name
-                    role_color = getattr(nb_device.role, 'color', '4b5563') or '4b5563'
                     role_synced = any(nb_role_name.lower() == zg.lower() for zg in zabbix_group_names)
 
-                # Format Role Sync action / badge cell
+                # Format Role Sync action / badge cell (Plain text, no color!)
                 if not nb_device or nb_role_name == "-":
                     sync_cell = {"type": "none", "text": "No Role"}
                 elif role_synced:
@@ -449,7 +470,7 @@ class ZabbixHostsView(View):
                 items.append([
                     h_name,
                     ip_str,
-                    {"type": "role_badge", "name": nb_role_name, "color": role_color},
+                    nb_role_name,  # Plain text, no color!
                     zabbix_group_disp,
                     protocol_str,
                     monitored_by_str,
