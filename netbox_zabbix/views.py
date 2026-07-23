@@ -269,24 +269,76 @@ class ZabbixTagsView(View):
 class ZabbixHostGroupsView(View):
     def get(self, request):
         api = ZabbixAPI()
-        groups = api.get_host_groups()
+        zabbix_groups = api.get_host_groups()
         
-        if isinstance(groups, dict) and "error" in groups:
+        if isinstance(zabbix_groups, dict) and "error" in zabbix_groups:
             return render(request, 'netbox_zabbix/zabbix_table.html', {
-                'title': 'Host Groups', 'error': groups["error"]
+                'title': 'Host Groups', 'error': zabbix_groups["error"]
             })
-            
-        headers = ["Group ID", "Group Name"]
+
+        # Fetch NetBox Device Roles for comparison
+        netbox_roles_map = {}
+        try:
+            from dcim.models import DeviceRole
+            for r in DeviceRole.objects.all():
+                if r.name:
+                    netbox_roles_map[r.name.strip().lower()] = r
+        except Exception as e:
+            logger.error(f"Error fetching NetBox DeviceRoles: {e}")
+
+        headers = ["Group ID", "Zabbix Host Group Name", "NetBox Device Role", "Sync Status"]
         items = []
-        if isinstance(groups, list):
-            for g in groups:
+
+        if isinstance(zabbix_groups, list):
+            for g in zabbix_groups:
+                gid = g.get("groupid", "-")
+                g_name = g.get("name", "-")
+                g_lower = g_name.strip().lower()
+
+                if g_lower in netbox_roles_map:
+                    role_obj = netbox_roles_map[g_lower]
+                    r_color = getattr(role_obj, 'color', '4b5563') or '4b5563'
+                    role_cell = {"type": "role_badge", "name": role_obj.name, "color": r_color}
+                    status_cell = {"type": "synced", "text": "Synced"}
+                else:
+                    role_cell = {"type": "none", "text": "Not in NetBox"}
+                    status_cell = {"type": "none", "text": "Zabbix Only"}
+
                 items.append([
-                    g.get("groupid", "-"),
-                    g.get("name", "-")
+                    gid,
+                    g_name,
+                    role_cell,
+                    status_cell
                 ])
-                
+
         context = process_table_data(request, items, headers, 'Host Groups', has_status=False)
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
+
+
+class ZabbixCreateHostGroupView(View):
+    def post(self, request):
+        role_name = request.POST.get('role_name')
+        
+        if not role_name:
+            messages.error(request, "Missing NetBox Device Role name.")
+            return redirect('plugins:netbox_zabbix:hostgroups')
+            
+        api = ZabbixAPI()
+        
+        groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
+        if isinstance(groups, list) and len(groups) > 0:
+            messages.info(request, f"Host Group '{role_name}' already exists in Zabbix.")
+            return redirect('plugins:netbox_zabbix:hostgroups')
+            
+        create_res = api.call("hostgroup.create", {"name": role_name})
+        if isinstance(create_res, dict) and "groupids" in create_res and len(create_res["groupids"]) > 0:
+            messages.success(request, f"Successfully created Zabbix Host Group '{role_name}' (ID {create_res['groupids'][0]})!")
+        elif isinstance(create_res, dict) and "error" in create_res:
+            messages.error(request, f"Failed to create Host Group in Zabbix: {create_res['error']}")
+        else:
+            messages.error(request, f"Unable to create Host Group '{role_name}' in Zabbix.")
+            
+        return redirect('plugins:netbox_zabbix:hostgroups')
 
 
 class ZabbixHostsView(View):
@@ -419,14 +471,12 @@ class ZabbixSyncRoleView(View):
             
         api = ZabbixAPI()
         
-        # 1. Check if Zabbix Host Group exists
         groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
         group_id = None
         
         if isinstance(groups, list) and len(groups) > 0:
             group_id = groups[0].get("groupid")
         else:
-            # Create the Host Group in Zabbix
             create_res = api.call("hostgroup.create", {"name": role_name})
             if isinstance(create_res, dict) and "groupids" in create_res and len(create_res["groupids"]) > 0:
                 group_id = create_res["groupids"][0]
@@ -438,7 +488,6 @@ class ZabbixSyncRoleView(View):
             messages.error(request, f"Could not create or find Zabbix Host Group '{role_name}'.")
             return redirect('plugins:netbox_zabbix:hosts')
             
-        # 2. Assign Host Group to Host in Zabbix using host.massadd
         mass_res = api.call("host.massadd", {
             "hosts": [{"hostid": host_id}],
             "groups": [{"groupid": group_id}]
