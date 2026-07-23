@@ -23,37 +23,37 @@
                         <i class="mdi mdi-server fs-2"></i>
                     </div>
                     <div>
-                        <div class="fs-6 text-muted text-uppercase fw-semibold">Total {{ title }}</div>
+                        <div class="fs-6 text-muted text-uppercase fw-semibold">Total NetBox Devices</div>
                         <div class="fs-2 fw-bold text-primary">{{ total_devices }}</div>
-                        <div class="fs-7 text-muted">All configured Zabbix {{ title|lower }}</div>
+                        <div class="fs-7 text-muted">All configured NetBox devices</div>
                     </div>
                 </div>
             </a>
         </div>
         <div class="col-md-4">
-            <a href="?status=synced{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'synced' %}border border-success border-2{% else %}border-0{% endif %}" title="Click to view active items">
+            <a href="?status=matched{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'matched' or status_filter == 'synced' %}border border-success border-2{% else %}border-0{% endif %}" title="Click to view matched items">
                 <div class="card-body d-flex align-items-center">
                     <div class="avatar bg-success text-white p-3 rounded-circle me-3">
                         <i class="mdi mdi-check-circle fs-2"></i>
                     </div>
                     <div>
-                        <div class="fs-6 text-muted text-uppercase fw-semibold">Active / Monitored</div>
+                        <div class="fs-6 text-muted text-uppercase fw-semibold">Matched in Zabbix</div>
                         <div class="fs-2 fw-bold text-success">{{ synced_devices }}</div>
-                        <div class="fs-7 text-muted">Monitored in Zabbix (Click to filter)</div>
+                        <div class="fs-7 text-muted">Name & IP match in Zabbix (Click to filter)</div>
                     </div>
                 </div>
             </a>
         </div>
         <div class="col-md-4">
-            <a href="?status=disabled{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'disabled' or status_filter == 'pending' %}border border-danger border-2{% else %}border-0{% endif %}" title="Click to view disabled items">
+            <a href="?status=mismatch{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'mismatch' or status_filter == 'pending' %}border border-danger border-2{% else %}border-0{% endif %}" title="Click to view mismatched or missing items">
                 <div class="card-body d-flex align-items-center">
                     <div class="avatar bg-danger text-white p-3 rounded-circle me-3">
                         <i class="mdi mdi-alert-circle fs-2"></i>
                     </div>
                     <div>
-                        <div class="fs-6 text-muted text-uppercase fw-semibold">Disabled / Offline</div>
+                        <div class="fs-6 text-muted text-uppercase fw-semibold">Mismatch / Not in Zabbix</div>
                         <div class="fs-2 fw-bold text-danger">{{ devices_to_sync }}</div>
-                        <div class="fs-7 text-muted">Disabled or offline in Zabbix</div>
+                        <div class="fs-7 text-muted">Name/IP mismatch or missing (Click to filter)</div>
                     </div>
                 </div>
             </a>
@@ -115,12 +115,12 @@
             <div class="col-auto ms-auto">
                 <span class="badge bg-light text-dark border">
                     <i class="mdi mdi-filter-check me-1"></i>
-                    {% if status_filter == 'synced' or status_filter == 'active' %}
-                        Showing Active / Monitored {{ title }}
-                    {% elif status_filter == 'disabled' or status_filter == 'pending' %}
-                        Showing Disabled / Offline {{ title }}
+                    {% if status_filter == 'synced' or status_filter == 'matched' %}
+                        Showing Matched {{ title }}
+                    {% elif status_filter == 'mismatch' or status_filter == 'pending' %}
+                        Showing Mismatched / Not in Zabbix {{ title }}
                     {% else %}
-                        Showing All Zabbix {{ title }}
+                        Showing All NetBox {{ title }}
                     {% endif %}
                 </span>
             </div>
@@ -150,7 +150,19 @@
                         <tr>
                             {% for cell in row %}
                                 <td>
-                                    {% if cell.type == "role_badge" %}
+                                    {% if cell.type == "matched" %}
+                                        <span class="badge bg-success text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
+                                            <i class="mdi mdi-check-circle me-1"></i> Matched
+                                        </span>
+                                    {% elif cell.type == "name_mismatch" or cell.type == "ip_mismatch" %}
+                                        <span class="badge bg-warning text-dark fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
+                                            <i class="mdi mdi-alert me-1"></i> {{ cell.text }}
+                                        </span>
+                                    {% elif cell.type == "not_in_zabbix" %}
+                                        <span class="badge bg-danger text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
+                                            <i class="mdi mdi-close-circle me-1"></i> Not in Zabbix
+                                        </span>
+                                    {% elif cell.type == "role_badge" %}
                                         <span class="badge text-white" style="background-color: #{{ cell.color }}; font-weight: 600; font-size: 0.85rem; border: 1px solid rgba(0,0,0,0.15);">
                                             {{ cell.name }}
                                         </span>
@@ -181,9 +193,9 @@
                                         <span class="badge bg-success text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
                                             <i class="mdi mdi-check-circle me-1"></i> {{ cell }}
                                         </span>
-                                    {% elif cell == "Disabled" or cell == "Unmonitored" or cell == "Offline" or cell == "Passive" %}
-                                        <span class="badge bg-danger text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
-                                            <i class="mdi mdi-alert-circle me-1"></i> {{ cell }}
+                                    {% elif cell == "Disabled" or cell == "Unmonitored" or cell == "Offline" or cell == "Passive" or cell == "Staged" or cell == "Decommissioned" %}
+                                        <span class="badge bg-secondary text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
+                                            {{ cell }}
                                         </span>
                                     {% elif cell == "SNMP" %}
                                         <span class="badge bg-info text-dark fw-bold" style="font-size: 0.82rem;">SNMP</span>

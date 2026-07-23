@@ -2,6 +2,7 @@ from django.views.generic import View
 from django.shortcuts import render, redirect
 from django.contrib import messages
 from django.core.paginator import Paginator
+from django.db.models import Q
 import logging
 from .zabbix_api import ZabbixAPI
 
@@ -16,26 +17,38 @@ def process_table_data(request, items, headers, title, default_per_page=50, has_
 
     if has_status:
         for row in items:
-            row_str_list = [str(cell).lower() for cell in row if not isinstance(cell, dict)]
-            if any(s in row_str_list for s in ['monitored', 'online', 'active']):
+            row_cells = [c for c in row if isinstance(c, dict)]
+            row_strs = [str(c).lower() for c in row if not isinstance(c, dict)]
+
+            is_matched = any(c.get("type") in ["matched", "synced"] for c in row_cells) or any(s in row_strs for s in ['matched', 'monitored', 'active', 'online'])
+            if is_matched:
                 synced_devices += 1
-            elif any(s in row_str_list for s in ['disabled', 'unmonitored', 'offline']):
-                devices_to_sync += 1
             else:
-                # Default to active if unknown
-                synced_devices += 1
+                devices_to_sync += 1
 
         status_filter = request.GET.get('status', '').strip().lower()
-        if status_filter == 'synced' or status_filter == 'active':
-            items = [row for row in items if any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row if not isinstance(cell, dict))]
-        elif status_filter == 'pending' or status_filter == 'inactive' or status_filter == 'disabled':
-            items = [row for row in items if any(str(cell).lower() in ['disabled', 'unmonitored', 'offline'] for cell in row if not isinstance(cell, dict))]
+        if status_filter in ['synced', 'active', 'matched']:
+            items = [
+                row for row in items 
+                if any(c.get("type") in ["matched", "synced"] for c in row if isinstance(c, dict))
+                or any(s in [str(c).lower() for c in row if not isinstance(c, dict)] for s in ['matched', 'monitored', 'active', 'online'])
+            ]
+        elif status_filter in ['pending', 'inactive', 'mismatch', 'not_in_zabbix', 'disabled']:
+            items = [
+                row for row in items 
+                if any(c.get("type") in ["name_mismatch", "ip_mismatch", "not_in_zabbix"] for c in row if isinstance(c, dict))
+                or any(s in [str(c).lower() for c in row if not isinstance(c, dict)] for s in ['mismatch', 'disabled', 'unmonitored', 'offline'])
+            ]
     else:
         status_filter = ""
 
     q = request.GET.get('q', '').strip()
     if q:
-        items = [row for row in items if any(q.lower() in str(cell).lower() for cell in row if not isinstance(cell, dict))]
+        items = [
+            row for row in items 
+            if any(q.lower() in str(c.get("text", "")).lower() for c in row if isinstance(c, dict))
+            or any(q.lower() in str(c).lower() for c in row if not isinstance(c, dict))
+        ]
 
     filtered_count = len(items)
 
@@ -281,7 +294,6 @@ class ZabbixHostGroupsView(View):
                 'title': 'Host Groups', 'error': zabbix_groups["error"]
             })
 
-        # Fetch Zabbix groups dictionary
         zabbix_group_map = {}
         if isinstance(zabbix_groups, list):
             for g in zabbix_groups:
@@ -289,7 +301,6 @@ class ZabbixHostGroupsView(View):
                 if g_name:
                     zabbix_group_map[g_name.lower()] = g
 
-        # Fetch NetBox Device Roles
         netbox_roles = []
         try:
             from dcim.models import DeviceRole
@@ -370,121 +381,153 @@ class ZabbixCreateHostGroupView(View):
 class ZabbixHostsView(View):
     def get(self, request):
         api = ZabbixAPI()
-        hosts = api.get_hosts()
         
-        if isinstance(hosts, dict) and "error" in hosts:
-            return render(request, 'netbox_zabbix/zabbix_table.html', {
-                'title': 'Hosts', 'error': hosts["error"]
-            })
+        # 1. Database-Level Filtering on NetBox Devices
+        from dcim.models import Device
 
-        # Pre-build Proxy ID -> Name map
-        proxy_map = {}
+        qs = Device.objects.select_related('role', 'primary_ip4', 'primary_ip6').all()
+
+        q = request.GET.get('q', '').strip()
+        if q:
+            qs = qs.filter(
+                Q(name__icontains=q) |
+                Q(primary_ip4__address__icontains=q) |
+                Q(role__name__icontains=q)
+            )
+
+        total_devices = qs.count()
+
+        per_page_param = request.GET.get('per_page', '50')
+        page_param = request.GET.get('page', '1')
+
         try:
-            proxies = api.get_proxies()
-            if isinstance(proxies, list):
-                for p in proxies:
-                    p_id = str(p.get("proxyid", ""))
-                    p_name = p.get("name") or p.get("host")
-                    if p_id and p_name:
-                        proxy_map[p_id] = p_name
+            per_page = int(per_page_param) if per_page_param.lower() != 'all' else total_devices
+            if per_page <= 0:
+                per_page = 50
+        except ValueError:
+            per_page = 50
+
+        paginator = Paginator(qs, per_page if per_page > 0 else 50)
+        try:
+            page_obj = paginator.page(page_param)
         except Exception:
-            pass
+            page_obj = paginator.page(1)
 
-        # Query NetBox Device objects for Role comparison
-        netbox_devices = {}
-        netbox_ip_map = {}
-        try:
-            from dcim.models import Device
-            for d in Device.objects.select_related('role', 'primary_ip4', 'primary_ip6').all():
-                if d.name:
-                    netbox_devices[d.name.lower()] = d
-                if d.primary_ip4:
-                    ip_clean = str(d.primary_ip4.address).split('/')[0]
-                    netbox_ip_map[ip_clean] = d
-        except Exception as e:
-            logger.error(f"Error querying NetBox devices: {e}")
-
-        headers = ["Host Name", "Primary IP", "NetBox Device Role", "Zabbix Hostgroups", "Protocol", "Monitored By", "Status", "Role Sync"]
-        items = []
-        if isinstance(hosts, list):
-            for h in hosts:
-                h_name = h.get("host", "-")
-                v_name = h.get("name", "") or h_name
-                host_id = h.get("hostid")
-                
-                # Zabbix status: 0 = Monitored/Active, 1 = Disabled/Unmonitored
-                status_val = str(h.get("status", "0"))
-                status_str = "Monitored" if status_val == "0" else "Disabled"
-
-                # 1. Interface & Protocol
-                interfaces = h.get("interfaces", [])
-                ip_str = "-"
-                port_str = "-"
-                protocol_str = "Agent"
+        # 2. Fetch Zabbix Hosts for lightweight matching
+        zabbix_hosts = api.get_hosts()
+        
+        zabbix_name_map = {}
+        zabbix_ip_map = {}
+        if isinstance(zabbix_hosts, list):
+            for zh in zabbix_hosts:
+                zh_name = zh.get("host", "").strip()
+                zh_vis_name = zh.get("name", "").strip()
+                if zh_name:
+                    zabbix_name_map[zh_name.lower()] = zh
+                if zh_vis_name:
+                    zabbix_name_map[zh_vis_name.lower()] = zh
+                    
+                interfaces = zh.get("interfaces", [])
                 if isinstance(interfaces, list) and len(interfaces) > 0:
                     main_iface = interfaces[0]
                     for iface in interfaces:
                         if str(iface.get("main")) == "1":
                             main_iface = iface
                             break
-                    ip_str = main_iface.get("ip", "-") or "-"
-                    port_str = main_iface.get("port", "-") or "-"
-                    if_type = str(main_iface.get("type", "1"))
-                    protocol_str = "SNMP" if if_type == "2" else "IPMI" if if_type == "3" else "JMX" if if_type == "4" else "Agent"
+                    zip_addr = main_iface.get("ip", "").strip()
+                    if zip_addr and zip_addr not in ["0.0.0.0", "127.0.0.1"]:
+                        zabbix_ip_map[zip_addr] = zh
 
-                # 2. Monitored By / Proxy designation
-                proxy_id = str(h.get("proxyid") or "0")
-                proxy_group_id = str(h.get("proxy_groupid") or "0")
-                monitored_by = str(h.get("monitored_by") or "0")
+        headers = [
+            "NetBox Device Name",
+            "NetBox Primary IP",
+            "NetBox Status",
+            "NetBox Device Role",
+            "Zabbix Host Name",
+            "Zabbix Primary IP",
+            "Match Status",
+            "Role Sync"
+        ]
 
-                if (monitored_by == "1" or proxy_id != "0") and proxy_id in proxy_map:
-                    monitored_by_str = f"Proxy: {proxy_map[proxy_id]}"
-                elif proxy_id != "0":
-                    monitored_by_str = f"Proxy (ID {proxy_id})"
-                elif monitored_by == "2" or proxy_group_id != "0":
-                    monitored_by_str = f"Proxy Group (ID {proxy_group_id})"
-                else:
-                    monitored_by_str = "Server"
+        # 3. Build table rows ONLY for the 50 items on current page!
+        page_devices = list(page_obj.object_list)
+        page_rows = []
 
-                # 3. Zabbix Hostgroups assigned
-                zabbix_groups = h.get("hostgroups", []) or h.get("groups", [])
-                zabbix_group_names = [g.get("name") for g in zabbix_groups if isinstance(g, dict) and g.get("name")]
-                zabbix_group_disp = ", ".join(zabbix_group_names) if zabbix_group_names else "-"
+        for dev in page_devices:
+            nb_name = dev.name or f"Device-{dev.pk}"
+            nb_ip = "—"
+            if dev.primary_ip4:
+                nb_ip = str(dev.primary_ip4.address).split('/')[0]
+            elif dev.primary_ip6:
+                nb_ip = str(dev.primary_ip6.address).split('/')[0]
 
-                # 4. NetBox Device Role matching
-                nb_device = netbox_devices.get(h_name.lower()) or netbox_devices.get(v_name.lower()) or netbox_ip_map.get(ip_str)
-                nb_role_name = "-"
-                role_synced = False
+            nb_status = str(dev.status).capitalize() if dev.status else "Active"
+            nb_role = dev.role.name if dev.role else "—"
 
-                if nb_device and nb_device.role:
-                    nb_role_name = nb_device.role.name
-                    role_synced = any(nb_role_name.lower() == zg.lower() for zg in zabbix_group_names)
+            zh_by_name = zabbix_name_map.get(nb_name.lower())
+            zh_by_ip = zabbix_ip_map.get(nb_ip) if nb_ip != "—" else None
 
-                # Format Role Sync action
-                if not nb_device or nb_role_name == "-":
-                    sync_cell = {"type": "none", "text": "No Role"}
-                elif role_synced:
-                    sync_cell = {"type": "synced", "text": "Synced"}
-                else:
-                    sync_cell = {
-                        "type": "sync_button",
-                        "host_id": host_id,
-                        "role_name": nb_role_name,
-                        "host_name": h_name
-                    }
+            zabbix_host_disp = "—"
+            zabbix_ip_disp = "—"
+            match_status_cell = {"type": "not_in_zabbix", "text": "Not in Zabbix"}
+            sync_cell = {"type": "none", "text": "—"}
 
-                items.append([
-                    h_name,
-                    ip_str,
-                    nb_role_name,
-                    zabbix_group_disp,
-                    protocol_str,
-                    monitored_by_str,
-                    status_str,  # Added Status column!
-                    sync_cell
-                ])
+            if zh_by_name and zh_by_ip and (zh_by_name.get("hostid") == zh_by_ip.get("hostid")):
+                zabbix_host_disp = zh_by_name.get("host", "-")
+                zabbix_ip_disp = nb_ip
+                match_status_cell = {"type": "matched", "text": "Matched"}
                 
-        context = process_table_data(request, items, headers, 'Hosts', has_status=True)
+                zabbix_groups = zh_by_name.get("hostgroups", []) or zh_by_name.get("groups", [])
+                zabbix_group_names = [g.get("name") for g in zabbix_groups if isinstance(g, dict) and g.get("name")]
+                role_synced = any(nb_role.lower() == zg.lower() for zg in zabbix_group_names) if nb_role != "—" else False
+                
+                if role_synced:
+                    sync_cell = {"type": "synced", "text": "Synced"}
+                elif nb_role != "—":
+                    sync_cell = {"type": "sync_button", "host_id": zh_by_name.get("hostid"), "role_name": nb_role}
+
+            elif zh_by_name:
+                zabbix_host_disp = zh_by_name.get("host", "-")
+                zip_found = "No IP"
+                interfaces = zh_by_name.get("interfaces", [])
+                if isinstance(interfaces, list) and len(interfaces) > 0:
+                    zip_found = interfaces[0].get("ip", "No IP")
+                zabbix_ip_disp = zip_found
+                match_status_cell = {"type": "ip_mismatch", "text": f"IP Mismatch ({zip_found})"}
+
+            elif zh_by_ip:
+                z_name_found = zh_by_ip.get("host", "Unknown")
+                zabbix_host_disp = z_name_found
+                zabbix_ip_disp = nb_ip
+                match_status_cell = {"type": "name_mismatch", "text": f"Name Mismatch ({z_name_found})"}
+
+            else:
+                match_status_cell = {"type": "not_in_zabbix", "text": "Not in Zabbix"}
+
+            page_rows.append([
+                nb_name,
+                nb_ip,
+                nb_status,
+                nb_role,
+                zabbix_host_disp,
+                zabbix_ip_disp,
+                match_status_cell,
+                sync_cell
+            ])
+
+        page_obj.object_list = page_rows
+
+        context = {
+            'title': 'Hosts',
+            'headers': headers,
+            'page_obj': page_obj,
+            'per_page': per_page_param if per_page_param.lower() == 'all' else per_page,
+            'total_devices': total_devices,
+            'synced_devices': len(zabbix_name_map),
+            'devices_to_sync': max(0, total_devices - len(zabbix_name_map)),
+            'has_status': True,
+            'q': q,
+        }
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
