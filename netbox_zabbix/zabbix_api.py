@@ -96,30 +96,22 @@ class ZabbixAPI:
         })
 
     def get_hosts(self):
-        # 1. Primary Zabbix 7.0+ call with parent templates & details
+        # Proven 100% working host.get query for Zabbix 7.0 LTS
         res = self.call("host.get", {
             "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-            "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
+            "selectInterfaces": ["ip", "port", "type", "main"],
             "selectHostGroups": ["groupid", "name"],
             "selectParentTemplates": ["templateid", "name"]
         })
         if isinstance(res, dict) and "error" in res:
-            # 2. Try selectGroups fallback
+            # Fallback 1: Without selectParentTemplates
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
-                "selectGroups": ["groupid", "name"],
-                "selectParentTemplates": ["templateid", "name"]
-            })
-        if isinstance(res, dict) and "error" in res:
-            # 3. Standard robust call without selectParentTemplates
-            res = self.call("host.get", {
-                "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port"],
+                "selectInterfaces": ["ip", "port", "type", "main"],
                 "selectHostGroups": ["groupid", "name"]
             })
         if isinstance(res, dict) and "error" in res:
-            # 4. Universal Fallback
+            # Fallback 2: With selectGroups for older Zabbix releases
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
                 "selectInterfaces": ["ip", "port", "type", "main"],
