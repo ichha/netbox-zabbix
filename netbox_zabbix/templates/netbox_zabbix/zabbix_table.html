@@ -149,7 +149,7 @@
                     {% for row in page_obj.object_list %}
                         <tr>
                             {% for cell in row %}
-                                <td class="align-middle" {% if cell.type == 'mapped_templates' %}style="max-width: 320px; min-width: 250px;"{% endif %}>
+                                <td class="align-middle">
                                     {% if cell.type == "matched" %}
                                         <span class="badge bg-success text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
                                             <i class="mdi mdi-check-circle me-1"></i> Matched
@@ -188,12 +188,12 @@
                                             </button>
                                         </form>
                                     {% elif cell.type == "mapped_templates" %}
-                                        <div class="d-flex align-items-center justify-content-between gap-1">
-                                            <div class="d-flex align-items-center gap-1 flex-nowrap overflow-x-auto py-1 me-1" style="max-width: 210px; overflow-x: auto; scrollbar-width: thin;">
+                                        <div class="d-flex align-items-center justify-content-between gap-2">
+                                            <div class="d-flex flex-column gap-1 align-items-start my-1">
                                                 {% if cell.templates %}
                                                     {% for t in cell.templates %}
-                                                        <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm text-nowrap flex-shrink-0" style="font-size: 0.8rem; padding: 4px 8px; border-radius: 4px; white-space: nowrap;">
-                                                            {{ t.name }}
+                                                        <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm" style="font-size: 0.82rem; padding: 4px 10px; border-radius: 4px;">
+                                                            <i class="mdi mdi-file-document-outline text-primary me-1"></i> {{ t.name }}
                                                             <form action="{% url 'plugins:netbox_zabbix:remove_template' %}" method="post" class="d-inline m-0 p-0">
                                                                 {% csrf_token %}
                                                                 <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
@@ -205,11 +205,11 @@
                                                         </span>
                                                     {% endfor %}
                                                 {% else %}
-                                                    <span class="text-muted small text-nowrap me-1" style="white-space: nowrap;">&mdash; No Templates &mdash;</span>
+                                                    <span class="text-muted small">&mdash; No Templates &mdash;</span>
                                                 {% endif %}
                                             </div>
                                             
-                                            <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 fw-bold text-nowrap flex-shrink-0" style="font-size: 0.78rem; white-space: nowrap;" data-bs-toggle="modal" data-bs-target="#mapTemplateModal_{{ cell.role_slug }}">
+                                            <button type="button" class="btn btn-sm btn-outline-primary py-1 px-2 fw-bold text-nowrap flex-shrink-0 ms-2" style="font-size: 0.78rem;" data-bs-toggle="modal" data-bs-target="#mapTemplateModal_{{ cell.role_slug }}">
                                                 <i class="mdi mdi-pencil me-1"></i> Map Templates
                                             </button>
 
