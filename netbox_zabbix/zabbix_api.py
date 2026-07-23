@@ -5,6 +5,10 @@ from django.conf import settings
 logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
 class ZabbixAPI:
+    """
+    Zabbix API Client supporting Zabbix 6.0 LTS, 7.0 LTS (v7.0.22+), 7.2+, 7.4+, and 8.0+.
+    Features multi-version adaptive schema fallbacks for complete forward and backward compatibility.
+    """
     def __init__(self):
         config = getattr(settings, 'PLUGINS_CONFIG', {}).get('netbox_zabbix', {})
         self.url = config.get('zabbix_url', 'http://10.26.192.125/zabbix/api_jsonrpc.php')
@@ -47,12 +51,24 @@ class ZabbixAPI:
         return res, None
 
     def get_proxies(self):
-        # Native Zabbix 7.0+ schema
-        return self.call("proxy.get", {
+        # 1. Primary: Native Zabbix 7.0+ / 7.2+ / 8.0+ schema
+        res = self.call("proxy.get", {
             "output": ["proxyid", "name", "operating_mode", "state", "version", "lastaccess", "description"]
         })
+        if isinstance(res, dict) and "error" in res:
+            # 2. Fallback: Zabbix 6.x schema
+            res = self.call("proxy.get", {
+                "output": ["proxyid", "host", "status", "description"]
+            })
+        if isinstance(res, dict) and "error" in res:
+            # 3. Universal Fallback: Basic proxy outputs
+            res = self.call("proxy.get", {
+                "output": ["proxyid", "name"]
+            })
+        return res
 
     def get_proxy_groups(self):
+        # Introduced in Zabbix 7.0+
         return self.call("proxygroup.get", {
             "output": ["proxy_groupid", "name", "state", "description"]
         })
@@ -63,9 +79,16 @@ class ZabbixAPI:
         })
 
     def get_template_groups(self):
-        return self.call("templategroup.get", {
+        # Zabbix 6.4+ / 7.0+
+        res = self.call("templategroup.get", {
             "output": ["groupid", "name"]
         })
+        if isinstance(res, dict) and "error" in res:
+            # Fallback to hostgroup for older versions
+            res = self.call("hostgroup.get", {
+                "output": ["groupid", "name"]
+            })
+        return res
 
     def get_macros(self):
         return self.call("usermacro.get", {
@@ -79,10 +102,18 @@ class ZabbixAPI:
         })
 
     def get_hosts(self):
-        return self.call("host.get", {
+        # 1. Zabbix 7.0+ / 7.2+ / 8.0+ schema
+        res = self.call("host.get", {
             "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
             "selectInterfaces": ["ip", "port", "type", "main"]
         })
+        if isinstance(res, dict) and "error" in res:
+            # 2. Fallback for older Zabbix schemas
+            res = self.call("host.get", {
+                "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
+                "selectInterfaces": ["ip", "port", "type", "main"]
+            })
+        return res
 
     def get_tags(self):
         hosts = self.call("host.get", {"output": ["hostid"], "selectTags": ["tag", "value"]})
