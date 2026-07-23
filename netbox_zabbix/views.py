@@ -424,15 +424,11 @@ class ZabbixHostsView(View):
                     zabbix_name_map[zh_vis_name.lower()] = zh
                     
                 interfaces = zh.get("interfaces", [])
-                if isinstance(interfaces, list) and len(interfaces) > 0:
-                    main_iface = interfaces[0]
+                if isinstance(interfaces, list):
                     for iface in interfaces:
-                        if str(iface.get("main")) == "1":
-                            main_iface = iface
-                            break
-                    zip_addr = main_iface.get("ip", "").strip()
-                    if zip_addr and zip_addr not in ["0.0.0.0", "127.0.0.1"]:
-                        zabbix_ip_map[zip_addr] = zh
+                        zip_addr = iface.get("ip", "").strip() if isinstance(iface, dict) else ""
+                        if zip_addr and zip_addr not in ["0.0.0.0", "127.0.0.1"]:
+                            zabbix_ip_map[zip_addr] = zh
 
         # 3. Process devices to compute rows and exact summary statistics
         all_rows = []
@@ -462,6 +458,25 @@ class ZabbixHostsView(View):
             monitored_by_str = "—"
 
             zh_target = zh_by_name or zh_by_ip
+            
+            # Check interface IPs for zh_by_name
+            zh_name_ips = []
+            main_z_ip = "No IP"
+            if zh_by_name:
+                zh_interfaces = zh_by_name.get("interfaces", [])
+                if isinstance(zh_interfaces, list):
+                    for iface in zh_interfaces:
+                        if isinstance(iface, dict):
+                            ip_val = iface.get("ip", "").strip()
+                            if ip_val:
+                                zh_name_ips.append(ip_val)
+                                if str(iface.get("main")) == "1":
+                                    main_z_ip = ip_val
+                    if not main_z_ip and zh_name_ips:
+                        main_z_ip = zh_name_ips[0]
+
+            ip_matched_on_name_host = (nb_ip != "—") and (nb_ip in zh_name_ips or nb_ip == main_z_ip)
+
             if zh_target:
                 z_st = str(zh_target.get("status", "0"))
                 zabbix_status_disp = "Monitored" if z_st == "0" else "Disabled"
@@ -493,7 +508,8 @@ class ZabbixHostsView(View):
             match_status_cell = {"type": "not_in_zabbix", "text": "Not in Zabbix"}
             sync_cell = {"type": "none", "text": "—"}
 
-            if zh_by_name and zh_by_ip and (zh_by_name.get("hostid") == zh_by_ip.get("hostid")):
+            if zh_by_name and ip_matched_on_name_host:
+                # True Match on Name AND IP
                 zabbix_host_disp = zh_by_name.get("host", "-")
                 zabbix_ip_disp = nb_ip
                 match_status_type = "matched"
@@ -510,17 +526,15 @@ class ZabbixHostsView(View):
                     sync_cell = {"type": "sync_button", "host_id": zh_by_name.get("hostid"), "role_name": nb_role}
 
             elif zh_by_name:
+                # Name matches, but IP mismatches in Zabbix
                 zabbix_host_disp = zh_by_name.get("host", "-")
-                zip_found = "No IP"
-                interfaces = zh_by_name.get("interfaces", [])
-                if isinstance(interfaces, list) and len(interfaces) > 0:
-                    zip_found = interfaces[0].get("ip", "No IP")
-                zabbix_ip_disp = zip_found
+                zabbix_ip_disp = main_z_ip
                 match_status_type = "mismatch"
-                match_status_cell = {"type": "ip_mismatch", "text": f"IP Mismatch ({zip_found})"}
+                match_status_cell = {"type": "ip_mismatch", "text": f"IP Mismatch ({main_z_ip})"}
                 mismatch_count += 1
 
             elif zh_by_ip:
+                # IP matches, but Name mismatches in Zabbix
                 z_name_found = zh_by_ip.get("host", "Unknown")
                 zabbix_host_disp = z_name_found
                 zabbix_ip_disp = nb_ip
