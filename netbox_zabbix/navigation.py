@@ -1,12 +1,10 @@
 from netbox.plugins import PluginMenu, PluginMenuItem, PluginMenuButton
-from utilities.choices import ButtonColorChoices
 
 server_buttons = (
     PluginMenuButton(
         link='plugins:netbox_zabbix:zabbixserver_add',
         title='Add Zabbix Server',
-        icon_class='mdi mdi-plus-thick',
-        color=ButtonColorChoices.GREEN
+        icon_class='mdi mdi-plus-thick'
     ),
 )
 
@@ -14,8 +12,7 @@ proxy_buttons = (
     PluginMenuButton(
         link='plugins:netbox_zabbix:zabbixproxy_add',
         title='Add Proxy',
-        icon_class='mdi mdi-plus-thick',
-        color=ButtonColorChoices.GREEN
+        icon_class='mdi mdi-plus-thick'
     ),
 )
 
@@ -23,8 +20,7 @@ hostgroup_buttons = (
     PluginMenuButton(
         link='plugins:netbox_zabbix:zabbixhostgroup_add',
         title='Add Hostgroup',
-        icon_class='mdi mdi-plus-thick',
-        color=ButtonColorChoices.GREEN
+        icon_class='mdi mdi-plus-thick'
     ),
 )
 
@@ -76,7 +72,6 @@ hosts = PluginMenuItem(
     link_text='Hosts'
 )
 
-# Render a single flat group to match the requested UI layout
 menu = PluginMenu(
     label='ZABBIX',
     icon_class='mdi mdi-monitor-network',
