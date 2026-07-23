@@ -329,13 +329,17 @@ class ZabbixHostsView(View):
                     else:
                         protocol_str = "Agent"
 
-                # 2. Monitored By / Proxy designation parsing
-                proxy_id = str(h.get("proxyid") or h.get("proxy_hostid") or "0")
+                # 2. Monitored By / Proxy designation parsing (Zabbix 7.0 fields)
+                proxy_id = str(h.get("proxyid") or "0")
+                proxy_group_id = str(h.get("proxy_groupid") or "0")
+                monitored_by = str(h.get("monitored_by") or "0")
                 
-                if proxy_id != "0" and proxy_id in proxy_map:
+                if (monitored_by == "1" or proxy_id != "0") and proxy_id in proxy_map:
                     monitored_by_str = f"Proxy: {proxy_map[proxy_id]}"
                 elif proxy_id != "0":
                     monitored_by_str = f"Proxy (ID {proxy_id})"
+                elif monitored_by == "2" or proxy_group_id != "0":
+                    monitored_by_str = f"Proxy Group (ID {proxy_group_id})"
                 else:
                     monitored_by_str = "Server"
 

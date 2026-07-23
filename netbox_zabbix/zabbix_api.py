@@ -47,8 +47,9 @@ class ZabbixAPI:
         return res, None
 
     def get_proxies(self):
+        # Native Zabbix 7.0+ schema
         return self.call("proxy.get", {
-            "output": ["proxyid", "name", "host", "operating_mode", "status", "state", "version", "lastaccess", "description"]
+            "output": ["proxyid", "name", "operating_mode", "state", "version", "lastaccess", "description"]
         })
 
     def get_proxy_groups(self):
@@ -79,7 +80,7 @@ class ZabbixAPI:
 
     def get_hosts(self):
         return self.call("host.get", {
-            "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
+            "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
             "selectInterfaces": ["ip", "port", "type", "main"]
         })
 
