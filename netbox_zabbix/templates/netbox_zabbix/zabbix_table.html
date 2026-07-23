@@ -4,50 +4,76 @@
 
 {% block content %}
 <!-- Top Summary Cards -->
-<div class="row mb-4">
-    <div class="col-md-4">
-        <a href="?{% if q %}q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if not status_filter %}border border-primary border-2{% else %}border-0{% endif %}" title="Click to view all items">
-            <div class="card-body d-flex align-items-center">
-                <div class="avatar bg-primary text-white p-3 rounded-circle me-3">
-                    <i class="mdi mdi-server fs-2"></i>
+{% if has_status %}
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <a href="?{% if q %}q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if not status_filter %}border border-primary border-2{% else %}border-0{% endif %}" title="Click to view all items">
+                <div class="card-body d-flex align-items-center">
+                    <div class="avatar bg-primary text-white p-3 rounded-circle me-3">
+                        <i class="mdi mdi-server fs-2"></i>
+                    </div>
+                    <div>
+                        <div class="fs-6 text-muted text-uppercase fw-semibold">Total {{ title }}</div>
+                        <div class="fs-2 fw-bold text-primary">{{ total_devices }}</div>
+                        <div class="fs-7 text-muted">All configured Zabbix {{ title|lower }}</div>
+                    </div>
                 </div>
-                <div>
-                    <div class="fs-6 text-muted text-uppercase fw-semibold">Total {{ title }}</div>
-                    <div class="fs-2 fw-bold text-primary">{{ total_devices }}</div>
-                    <div class="fs-7 text-muted">All configured Zabbix {{ title|lower }}</div>
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="?status=synced{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'synced' %}border border-success border-2{% else %}border-0{% endif %}" title="Click to view active items">
+                <div class="card-body d-flex align-items-center">
+                    <div class="avatar bg-success text-white p-3 rounded-circle me-3">
+                        <i class="mdi mdi-check-circle fs-2"></i>
+                    </div>
+                    <div>
+                        <div class="fs-6 text-muted text-uppercase fw-semibold">Active / Monitored</div>
+                        <div class="fs-2 fw-bold text-success">{{ synced_devices }}</div>
+                        <div class="fs-7 text-muted">Monitored in Zabbix (Click to filter)</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <div class="col-md-4">
+            <a href="?status=pending{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'pending' %}border border-danger border-2{% else %}border-0{% endif %}" title="Click to view unmonitored items">
+                <div class="card-body d-flex align-items-center">
+                    <div class="avatar bg-danger text-white p-3 rounded-circle me-3">
+                        <i class="mdi mdi-sync-alert fs-2"></i>
+                    </div>
+                    <div>
+                        <div class="fs-6 text-muted text-uppercase fw-semibold">Unmonitored / Offline</div>
+                        <div class="fs-2 fw-bold text-danger">{{ devices_to_sync }}</div>
+                        <div class="fs-7 text-muted">Disabled or offline (Click to filter)</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+    </div>
+{% else %}
+    <!-- Single Top Card for Categories Without Status (Templates, Macros, Host Groups, etc.) -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card card-sm bg-body-tertiary shadow-sm border-0">
+                <div class="card-body d-flex align-items-center justify-content-between py-3">
+                    <div class="d-flex align-items-center">
+                        <div class="avatar bg-primary text-white p-3 rounded-circle me-3">
+                            <i class="mdi mdi-file-document-outline fs-2"></i>
+                        </div>
+                        <div>
+                            <div class="fs-6 text-muted text-uppercase fw-semibold">Total {{ title }}</div>
+                            <div class="fs-2 fw-bold text-primary">{{ total_devices }}</div>
+                        </div>
+                    </div>
+                    <div>
+                        <span class="badge bg-light text-dark border px-3 py-2 fs-7 fw-semibold">
+                            <i class="mdi mdi-buffer me-1 text-primary"></i> Live Zabbix {{ title }} Catalog
+                        </span>
+                    </div>
                 </div>
             </div>
-        </a>
+        </div>
     </div>
-    <div class="col-md-4">
-        <a href="?status=synced{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'synced' %}border border-success border-2{% else %}border-0{% endif %}" title="Click to view active items">
-            <div class="card-body d-flex align-items-center">
-                <div class="avatar bg-success text-white p-3 rounded-circle me-3">
-                    <i class="mdi mdi-check-circle fs-2"></i>
-                </div>
-                <div>
-                    <div class="fs-6 text-muted text-uppercase fw-semibold">Active / Monitored</div>
-                    <div class="fs-2 fw-bold text-success">{{ synced_devices }}</div>
-                    <div class="fs-7 text-muted">Monitored in Zabbix (Click to filter)</div>
-                </div>
-            </div>
-        </a>
-    </div>
-    <div class="col-md-4">
-        <a href="?status=pending{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'pending' %}border border-danger border-2{% else %}border-0{% endif %}" title="Click to view unmonitored items">
-            <div class="card-body d-flex align-items-center">
-                <div class="avatar bg-danger text-white p-3 rounded-circle me-3">
-                    <i class="mdi mdi-sync-alert fs-2"></i>
-                </div>
-                <div>
-                    <div class="fs-6 text-muted text-uppercase fw-semibold">Unmonitored / Offline</div>
-                    <div class="fs-2 fw-bold text-danger">{{ devices_to_sync }}</div>
-                    <div class="fs-7 text-muted">Disabled or offline (Click to filter)</div>
-                </div>
-            </div>
-        </a>
-    </div>
-</div>
+{% endif %}
 
 <!-- Search & Filter Bar -->
 <div class="card mb-3">
@@ -107,7 +133,6 @@
                         {% for col in headers %}
                             <th>{{ col }}</th>
                         {% endfor %}
-                        <th class="text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -146,11 +171,6 @@
                                     {% endif %}
                                 </td>
                             {% endfor %}
-                            <td class="text-end">
-                                <span class="btn btn-sm btn-outline-success disabled fw-bold" style="font-size: 0.82rem;">
-                                    <i class="mdi mdi-check me-1"></i> Synced
-                                </span>
-                            </td>
                         </tr>
                     {% endfor %}
                 </tbody>

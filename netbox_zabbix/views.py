@@ -4,22 +4,26 @@ from django.core.paginator import Paginator
 from .zabbix_api import ZabbixAPI
 
 
-def process_table_data(request, items, headers, title, default_per_page=50):
+def process_table_data(request, items, headers, title, default_per_page=50, has_status=True):
     total_devices = len(items)
 
-    # Calculate active/monitored and inactive/unmonitored counts
     synced_devices = 0
-    for row in items:
-        if any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row):
-            synced_devices += 1
-    devices_to_sync = total_devices - synced_devices
+    devices_to_sync = 0
 
-    # Filter by status if requested
-    status_filter = request.GET.get('status', '').strip().lower()
-    if status_filter == 'synced' or status_filter == 'active':
-        items = [row for row in items if any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row)]
-    elif status_filter == 'pending' or status_filter == 'inactive':
-        items = [row for row in items if not any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row)]
+    if has_status:
+        for row in items:
+            if any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row):
+                synced_devices += 1
+        devices_to_sync = total_devices - synced_devices
+
+        # Filter by status if requested
+        status_filter = request.GET.get('status', '').strip().lower()
+        if status_filter == 'synced' or status_filter == 'active':
+            items = [row for row in items if any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row)]
+        elif status_filter == 'pending' or status_filter == 'inactive':
+            items = [row for row in items if not any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row)]
+    else:
+        status_filter = ""
 
     # Quick search filtering across all columns
     q = request.GET.get('q', '').strip()
@@ -58,6 +62,7 @@ def process_table_data(request, items, headers, title, default_per_page=50):
         'synced_devices': synced_devices,
         'devices_to_sync': devices_to_sync,
         'status_filter': status_filter,
+        'has_status': has_status,
         'q': q,
     }
 
@@ -107,7 +112,7 @@ class ZabbixProxiesView(View):
                 'title': 'Proxies', 'error': proxies["error"]
             })
             
-        headers = ["Proxy ID", "Name", "Mode", "State", "Version", "Last Seen", "Description"]
+        headers = ["Proxy ID", "Name", "Mode", "State", "Version", "Last Seen"]
         items = []
         if isinstance(proxies, list):
             for p in proxies:
@@ -134,11 +139,10 @@ class ZabbixProxiesView(View):
                     mode_str,
                     state_str,
                     ver_str,
-                    last_seen_str,
-                    p.get("description", "-") or "-"
+                    last_seen_str
                 ])
                 
-        context = process_table_data(request, items, headers, 'Proxies')
+        context = process_table_data(request, items, headers, 'Proxies', has_status=True)
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
@@ -152,18 +156,17 @@ class ZabbixProxyGroupsView(View):
                 'title': 'Proxy Groups', 'error': groups["error"]
             })
             
-        headers = ["Group ID", "Name", "State", "Description"]
+        headers = ["Group ID", "Name", "State"]
         items = []
         if isinstance(groups, list):
             for g in groups:
                 items.append([
                     g.get("proxy_groupid", "-"),
                     g.get("name", "-"),
-                    g.get("state", "-") or "-",
-                    g.get("description", "-") or "-"
+                    g.get("state", "-") or "-"
                 ])
                 
-        context = process_table_data(request, items, headers, 'Proxy Groups')
+        context = process_table_data(request, items, headers, 'Proxy Groups', has_status=False)
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
@@ -177,7 +180,7 @@ class ZabbixTemplatesView(View):
                 'title': 'Templates', 'error': templates["error"]
             })
             
-        headers = ["Template ID", "Name / Technical Host", "Description"]
+        headers = ["Template ID", "Template Name", "Technical Name"]
         items = []
         if isinstance(templates, list):
             for t in templates:
@@ -185,10 +188,10 @@ class ZabbixTemplatesView(View):
                 items.append([
                     t.get("templateid", "-"),
                     name_disp,
-                    t.get("description", "-") or "-"
+                    t.get("host", "-")
                 ])
                 
-        context = process_table_data(request, items, headers, 'Templates')
+        context = process_table_data(request, items, headers, 'Templates', has_status=False)
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
@@ -202,7 +205,7 @@ class ZabbixTemplateGroupsView(View):
                 'title': 'Template Groups', 'error': groups["error"]
             })
             
-        headers = ["Group ID", "Name"]
+        headers = ["Group ID", "Group Name"]
         items = []
         if isinstance(groups, list):
             for g in groups:
@@ -211,7 +214,7 @@ class ZabbixTemplateGroupsView(View):
                     g.get("name", "-")
                 ])
                 
-        context = process_table_data(request, items, headers, 'Template Groups')
+        context = process_table_data(request, items, headers, 'Template Groups', has_status=False)
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
@@ -225,18 +228,17 @@ class ZabbixMacrosView(View):
                 'title': 'Global Macros', 'error': macros["error"]
             })
             
-        headers = ["Macro ID", "Macro", "Value", "Description"]
+        headers = ["Macro ID", "Macro Name", "Value"]
         items = []
         if isinstance(macros, list):
             for m in macros:
                 items.append([
                     m.get("globalmacroid", "-"),
                     m.get("macro", "-"),
-                    m.get("value", "-"),
-                    m.get("description", "-") or "-"
+                    m.get("value", "-")
                 ])
                 
-        context = process_table_data(request, items, headers, 'Global Macros')
+        context = process_table_data(request, items, headers, 'Global Macros', has_status=False)
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
@@ -259,7 +261,7 @@ class ZabbixTagsView(View):
                     t.get("value", "-") or "-"
                 ])
                 
-        context = process_table_data(request, items, headers, 'Tags')
+        context = process_table_data(request, items, headers, 'Tags', has_status=False)
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
@@ -282,7 +284,7 @@ class ZabbixHostGroupsView(View):
                     g.get("name", "-")
                 ])
                 
-        context = process_table_data(request, items, headers, 'Host Groups')
+        context = process_table_data(request, items, headers, 'Host Groups', has_status=False)
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
@@ -341,7 +343,7 @@ class ZabbixHostsView(View):
                     else:
                         protocol_str = "Agent"
 
-                # 2. Monitored By / Proxy designation parsing (Zabbix 7.0 fields)
+                # 2. Monitored By / Proxy designation parsing
                 proxy_id = str(h.get("proxyid") or "0")
                 proxy_group_id = str(h.get("proxy_groupid") or "0")
                 monitored_by = str(h.get("monitored_by") or "0")
@@ -365,5 +367,5 @@ class ZabbixHostsView(View):
                     status_str
                 ])
                 
-        context = process_table_data(request, items, headers, 'Hosts')
+        context = process_table_data(request, items, headers, 'Hosts', has_status=True)
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
