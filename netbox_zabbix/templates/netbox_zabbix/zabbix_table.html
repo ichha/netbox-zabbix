@@ -229,9 +229,9 @@
                                                                     Select Zabbix templates to associate with <strong>{{ cell.role_name }}</strong>. When pushing devices with this role from NetBox to Zabbix, these templates will be assigned automatically.
                                                                 </p>
 
-                                                                <!-- Multiple Select Tag-Pill Dropdown Box -->
+                                                                <!-- Clean Multiple Select Tag-Pill Input Box -->
                                                                 <div class="mb-3">
-                                                                    <label class="form-label fw-bold fs-7 text-dark mb-1">Zabbix Templates (Tag Select):</label>
+                                                                    <label class="form-label fw-bold fs-7 text-dark mb-1">Zabbix Templates:</label>
                                                                     <select name="template_ids" id="select_tmpl_{{ cell.role_slug }}" class="form-select tom-select" multiple data-placeholder="Select Zabbix templates..." style="min-height: 42px;">
                                                                         {% for tmpl in all_templates %}
                                                                             <option value="{{ tmpl.templateid }}" {% if tmpl.templateid in cell.template_ids %}selected{% endif %}>
@@ -239,39 +239,6 @@
                                                                             </option>
                                                                         {% endfor %}
                                                                     </select>
-                                                                </div>
-
-                                                                <!-- Quick Action Controls & Search -->
-                                                                <div class="row g-2 align-items-center mb-2 mt-3 border-top pt-3">
-                                                                    <div class="col-md-6">
-                                                                        <div class="input-group input-group-sm">
-                                                                            <span class="input-group-text"><i class="mdi mdi-magnify"></i></span>
-                                                                            <input type="text" class="form-control form-control-sm" placeholder="Search template list..." onkeyup="filterTemplates(this, '{{ cell.role_slug }}')">
-                                                                        </div>
-                                                                    </div>
-                                                                    <div class="col-md-6 text-end">
-                                                                        <button type="button" class="btn btn-sm btn-outline-primary fw-semibold me-1" onclick="selectAllTemplates('{{ cell.role_slug }}')">
-                                                                            <i class="mdi mdi-checkbox-multiple-marked me-1"></i> Select All
-                                                                        </button>
-                                                                        <button type="button" class="btn btn-sm btn-outline-secondary fw-semibold" onclick="deselectAllTemplates('{{ cell.role_slug }}')">
-                                                                            <i class="mdi mdi-checkbox-multiple-blank-outline me-1"></i> Clear All
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
-
-                                                                <!-- Template Checkbox Grid -->
-                                                                <div class="row g-2" id="tmpl_list_{{ cell.role_slug }}" style="max-height: 250px; overflow-y: auto;">
-                                                                    {% for tmpl in all_templates %}
-                                                                        <div class="col-md-6 tmpl-card">
-                                                                            <div class="form-check p-2 border rounded hover-bg-light">
-                                                                                <input class="form-check-input tmpl-cb" type="checkbox" data-select-id="select_tmpl_{{ cell.role_slug }}" value="{{ tmpl.templateid }}" id="tmpl_{{ cell.role_slug }}_{{ tmpl.templateid }}" {% if tmpl.templateid in cell.template_ids %}checked{% endif %} onchange="syncCheckboxToSelect(this)">
-                                                                                <label class="form-check-label w-100 cursor-pointer" for="tmpl_{{ cell.role_slug }}_{{ tmpl.templateid }}">
-                                                                                    <div class="fw-bold fs-7 text-dark">{{ tmpl.name }}</div>
-                                                                                    <div class="text-muted text-truncate fs-8" style="max-width: 250px;">{{ tmpl.host }}</div>
-                                                                                </label>
-                                                                            </div>
-                                                                        </div>
-                                                                    {% endfor %}
                                                                 </div>
                                                             </div>
                                                             <div class="modal-footer">
@@ -402,90 +369,15 @@
 </div>
 
 <script>
-function syncCheckboxToSelect(cb) {
-    var selectId = cb.getAttribute('data-select-id');
-    var sel = document.getElementById(selectId);
-    if (!sel) return;
-    var val = cb.value;
-    for (var i = 0; i < sel.options.length; i++) {
-        if (sel.options[i].value === val) {
-            sel.options[i].selected = cb.checked;
-            break;
-        }
-    }
-    if (sel.tomselect) {
-        sel.tomselect.sync();
-    }
-}
-
-function syncSelectToCheckboxes(sel, roleSlug) {
-    var selectedVals = Array.from(sel.selectedOptions).map(o => o.value);
-    var checkboxes = document.querySelectorAll('#tmpl_list_' + roleSlug + ' input[type="checkbox"]');
-    checkboxes.forEach(function(cb) {
-        cb.checked = selectedVals.includes(cb.value);
-    });
-}
-
-function filterTemplates(input, roleSlug) {
-    var query = input.value.toLowerCase().trim();
-    var cards = document.querySelectorAll('#tmpl_list_' + roleSlug + ' .tmpl-card');
-    cards.forEach(function(card) {
-        var text = card.textContent.toLowerCase();
-        if (!query || text.includes(query)) {
-            card.style.display = '';
-        } else {
-            card.style.display = 'none';
-        }
-    });
-}
-
-function selectAllTemplates(roleSlug) {
-    var checkboxes = document.querySelectorAll('#tmpl_list_' + roleSlug + ' input[type="checkbox"]');
-    var sel = document.getElementById('select_tmpl_' + roleSlug);
-    checkboxes.forEach(function(cb) {
-        if (cb.closest('.tmpl-card').style.display !== 'none') {
-            cb.checked = true;
-        }
-    });
-    if (sel) {
-        for (var i = 0; i < sel.options.length; i++) {
-            sel.options[i].selected = true;
-        }
-        if (sel.tomselect) sel.tomselect.sync();
-    }
-}
-
-function deselectAllTemplates(roleSlug) {
-    var checkboxes = document.querySelectorAll('#tmpl_list_' + roleSlug + ' input[type="checkbox"]');
-    var sel = document.getElementById('select_tmpl_' + roleSlug);
-    checkboxes.forEach(function(cb) {
-        cb.checked = false;
-    });
-    if (sel) {
-        for (var i = 0; i < sel.options.length; i++) {
-            sel.options[i].selected = false;
-        }
-        if (sel.tomselect) sel.tomselect.sync();
-    }
-}
-
 document.addEventListener("DOMContentLoaded", function() {
-    // Initialize TomSelect if available
+    // Initialize TomSelect on all select.tom-select elements if TomSelect library is present
     if (typeof TomSelect !== 'undefined') {
         document.querySelectorAll('select.tom-select').forEach(function(el) {
             if (!el.tomselect) {
                 new TomSelect(el, {
                     plugins: ['remove_button'],
                     persist: false,
-                    create: false,
-                    onItemAdd: function() {
-                        var slug = el.id.replace('select_tmpl_', '');
-                        syncSelectToCheckboxes(el, slug);
-                    },
-                    onItemRemove: function() {
-                        var slug = el.id.replace('select_tmpl_', '');
-                        syncSelectToCheckboxes(el, slug);
-                    }
+                    create: false
                 });
             }
         });
