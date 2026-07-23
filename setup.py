@@ -11,5 +11,8 @@ setup(
     author_email='antigravity@example.com',
     packages=find_packages(),
     include_package_data=True,
+    package_data={
+        'netbox_zabbix': ['templates/*/*', 'templates/*'],
+    },
     zip_safe=False,
 )
