@@ -1,0 +1,64 @@
+{% extends 'base/layout.html' %}
+
+{% block title %}Zabbix &mdash; {{ title }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col col-md-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">
+                    <i class="mdi mdi-server-network me-2"></i>Zabbix {{ title }}
+                </h5>
+                <span class="badge bg-secondary">Live API</span>
+            </div>
+            <div class="card-body p-0">
+                {% if error %}
+                    <div class="alert alert-danger m-3 mb-0" role="alert">
+                        <i class="mdi mdi-alert-circle me-1"></i>
+                        <strong>Failed to connect to Zabbix API:</strong> {{ error }}
+                    </div>
+                {% elif items %}
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    {% for col in headers %}
+                                        <th>{{ col }}</th>
+                                    {% endfor %}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in items %}
+                                    <tr>
+                                        {% for cell in row %}
+                                            <td>
+                                                {% if cell == "Monitored" %}
+                                                    <span class="badge bg-success">Monitored</span>
+                                                {% elif cell == "Unmonitored" %}
+                                                    <span class="badge bg-warning">Unmonitored</span>
+                                                {% elif cell == "Active" %}
+                                                    <span class="badge bg-info">Active</span>
+                                                {% elif cell == "Passive" %}
+                                                    <span class="badge bg-secondary">Passive</span>
+                                                {% else %}
+                                                    {{ cell }}
+                                                {% endif %}
+                                            </td>
+                                        {% endfor %}
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="text-center p-4 text-muted">
+                        <i class="mdi mdi-tray-alert display-6 d-block mb-2"></i>
+                        No {{ title|lower }} found on the connected Zabbix server.
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

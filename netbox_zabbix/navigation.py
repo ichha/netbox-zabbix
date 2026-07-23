@@ -2,7 +2,7 @@ from netbox.plugins import PluginMenu, PluginMenuItem
 
 menu = PluginMenu(
     label='ZABBIX',
-    icon_class='mdi mdi-monitor-network',
+    icon_class='mdi mdi-server-network',
     groups=(
         ('', (
             PluginMenuItem(link='plugins:netbox_zabbix:servers', link_text='Servers'),
