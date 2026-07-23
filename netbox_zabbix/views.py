@@ -284,26 +284,63 @@ class ZabbixHostsView(View):
                 'title': 'Hosts', 'error': hosts["error"]
             })
             
-        headers = ["Host Name", "Primary IP", "Visible Name", "Status", "Port", "Zabbix Host ID"]
+        headers = ["Host Name", "Primary IP", "Protocol", "Port", "Monitored By", "Visible Name", "Status"]
         items = []
         if isinstance(hosts, list):
             for h in hosts:
                 status_str = "Monitored" if str(h.get("status")) == "0" else "Unmonitored"
                 
+                # 1. Interface & Protocol parsing
                 interfaces = h.get("interfaces", [])
                 ip_str = "-"
                 port_str = "-"
+                protocol_str = "Agent"
+                
                 if isinstance(interfaces, list) and len(interfaces) > 0:
-                    ip_str = interfaces[0].get("ip", "-") or "-"
-                    port_str = interfaces[0].get("port", "-") or "-"
+                    main_iface = interfaces[0]
+                    for iface in interfaces:
+                        if str(iface.get("main")) == "1":
+                            main_iface = iface
+                            break
                     
+                    ip_str = main_iface.get("ip", "-") or "-"
+                    port_str = main_iface.get("port", "-") or "-"
+                    
+                    if_type = str(main_iface.get("type", "1"))
+                    if if_type == "2":
+                        protocol_str = "SNMP"
+                    elif if_type == "3":
+                        protocol_str = "IPMI"
+                    elif if_type == "4":
+                        protocol_str = "JMX"
+                    else:
+                        protocol_str = "Agent"
+
+                # 2. Monitored By / Proxy designation parsing
+                proxy_obj = h.get("proxy")
+                proxy_name = None
+                if isinstance(proxy_obj, dict):
+                    proxy_name = proxy_obj.get("name") or proxy_obj.get("host")
+                elif isinstance(proxy_obj, list) and len(proxy_obj) > 0 and isinstance(proxy_obj[0], dict):
+                    proxy_name = proxy_obj[0].get("name") or proxy_obj[0].get("host")
+                    
+                proxy_id = h.get("proxyid") or h.get("proxy_hostid")
+                
+                if proxy_name:
+                    monitored_by_str = f"Proxy: {proxy_name}"
+                elif proxy_id and str(proxy_id) != "0":
+                    monitored_by_str = f"Proxy (ID {proxy_id})"
+                else:
+                    monitored_by_str = "Server"
+
                 items.append([
                     h.get("host", "-"),
                     ip_str,
-                    h.get("name") or h.get("host") or "-",
-                    status_str,
+                    protocol_str,
                     port_str,
-                    h.get("hostid", "-")
+                    monitored_by_str,
+                    h.get("name") or h.get("host") or "-",
+                    status_str
                 ])
                 
         context = process_table_data(request, items, headers, 'Hosts')

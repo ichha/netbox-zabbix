@@ -80,7 +80,8 @@ class ZabbixAPI:
     def get_hosts(self):
         return self.call("host.get", {
             "output": "extend",
-            "selectInterfaces": ["ip", "port", "main", "type"]
+            "selectInterfaces": "extend",
+            "selectProxy": "extend"
         })
 
     def get_tags(self):

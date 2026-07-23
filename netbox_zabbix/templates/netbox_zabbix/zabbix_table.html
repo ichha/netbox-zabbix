@@ -123,9 +123,21 @@
                                         <span class="badge bg-danger text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
                                             <i class="mdi mdi-alert-circle me-1"></i> {{ cell }}
                                         </span>
+                                    {% elif cell == "SNMP" %}
+                                        <span class="badge bg-info text-dark fw-bold" style="font-size: 0.82rem;">SNMP</span>
+                                    {% elif cell == "Agent" %}
+                                        <span class="badge bg-primary text-white fw-bold" style="font-size: 0.82rem;">Agent</span>
+                                    {% elif cell == "IPMI" %}
+                                        <span class="badge bg-warning text-dark fw-bold" style="font-size: 0.82rem;">IPMI</span>
+                                    {% elif cell == "JMX" %}
+                                        <span class="badge bg-secondary text-white fw-bold" style="font-size: 0.82rem;">JMX</span>
+                                    {% elif cell|slice:":7" == "Proxy: " %}
+                                        <span class="text-primary fw-bold"><i class="mdi mdi-server-network me-1"></i>{{ cell }}</span>
+                                    {% elif cell == "Server" %}
+                                        <span class="text-secondary"><i class="mdi mdi-server me-1"></i>Server</span>
                                     {% elif forloop.counter == 1 %}
                                         <span class="fw-bold text-primary">{{ cell }}</span>
-                                    {% elif forloop.counter == 2 and cell|slice:":3" == "10." or cell|slice:":3" == "172" or cell|slice:":2" == "19" %}
+                                    {% elif forloop.counter == 2 and cell|slice:":3" == "10." or cell|slice:":3" == "172" or cell|slice:":2" == "19" or cell|slice:":3" == "120" %}
                                         <code class="fw-bold fs-7">{{ cell }}</code>
                                     {% elif cell|slice:":2" == "7." or cell|slice:":2" == "6." %}
                                         <span class="badge bg-info text-dark fw-bold" style="font-size: 0.82rem;">{{ cell }}</span>
