@@ -512,7 +512,7 @@ class ZabbixHostsView(View):
                             main_iface = iface
                             break
                     if_type = str(main_iface.get("type", "1"))
-                    protocol_str = "SNMP" if if_type == "2" else "IPMI" if if_type == "3" else "JMX" if if_type ==="4" else "Agent"
+                    protocol_str = "SNMP" if if_type == "2" else "IPMI" if if_type == "3" else "JMX" if if_type == "4" else "Agent"
 
                 proxy_id = str(perfect_match_host.get("proxyid") or "0")
                 proxy_group_id = str(perfect_match_host.get("proxy_groupid") or "0")
