@@ -417,6 +417,26 @@ class ZabbixMapTemplatesView(View):
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
+class ZabbixRemoveTemplateView(View):
+    def post(self, request):
+        role_name = request.POST.get('role_name')
+        template_id = request.POST.get('template_id')
+        
+        if not role_name or not template_id:
+            messages.error(request, "Missing Role name or Template ID.")
+            return redirect('plugins:netbox_zabbix:hostgroups')
+
+        cur_mapped = get_mapped_templates(role_name)
+        new_mapped = [t for t in cur_mapped if str(t.get("id")) != str(template_id)]
+        
+        new_ids = [str(t["id"]) for t in new_mapped]
+        new_names = [t["name"] for t in new_mapped]
+        
+        save_mapped_templates(role_name, new_ids, new_names)
+        messages.success(request, f"Removed template from '{role_name}'.")
+        return redirect('plugins:netbox_zabbix:hostgroups')
+
+
 class ZabbixCreateHostGroupView(View):
     def post(self, request):
         role_name = request.POST.get('role_name')
