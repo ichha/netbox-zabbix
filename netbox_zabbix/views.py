@@ -5,11 +5,12 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 import logging
 from .zabbix_api import ZabbixAPI
+from .template_storage import get_mapped_templates, save_mapped_templates
 
 logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
 
-def process_table_data(request, items, headers, title, default_per_page=50, has_status=True):
+def process_table_data(request, items, headers, title, default_per_page=50, has_status=True, extra_context=None):
     total_devices = len(items)
 
     synced_devices = 0
@@ -72,7 +73,7 @@ def process_table_data(request, items, headers, title, default_per_page=50, has_
     except Exception:
         page_obj = paginator.page(1)
 
-    return {
+    res = {
         'title': title,
         'headers': headers,
         'page_obj': page_obj,
@@ -84,6 +85,9 @@ def process_table_data(request, items, headers, title, default_per_page=50, has_
         'has_status': has_status,
         'q': q,
     }
+    if extra_context and isinstance(extra_context, dict):
+        res.update(extra_context)
+    return res
 
 
 class ZabbixServersView(View):
@@ -288,11 +292,23 @@ class ZabbixHostGroupsView(View):
     def get(self, request):
         api = ZabbixAPI()
         zabbix_groups = api.get_host_groups()
+        zabbix_templates = api.get_templates()
         
         if isinstance(zabbix_groups, dict) and "error" in zabbix_groups:
             return render(request, 'netbox_zabbix/zabbix_table.html', {
                 'title': 'Host Groups', 'error': zabbix_groups["error"]
             })
+
+        all_templates_list = []
+        if isinstance(zabbix_templates, list):
+            for tmpl in zabbix_templates:
+                tid = str(tmpl.get("templateid", ""))
+                tname = tmpl.get("name") or tmpl.get("host") or f"Template {tid}"
+                all_templates_list.append({
+                    "templateid": tid,
+                    "name": tname,
+                    "host": tmpl.get("host", "")
+                })
 
         zabbix_group_map = {}
         if isinstance(zabbix_groups, list):
@@ -308,13 +324,23 @@ class ZabbixHostGroupsView(View):
         except Exception as e:
             logger.error(f"Error fetching NetBox DeviceRoles: {e}")
 
-        headers = ["Group ID", "Zabbix Host Group Name", "NetBox Device Role", "Sync Status"]
+        headers = ["Group ID", "Zabbix Host Group Name", "NetBox Device Role", "Mapped Templates", "Sync Status"]
         items = []
         processed_zabbix_lower = set()
 
         for role in netbox_roles:
             r_name = role.name
             r_lower = r_name.strip().lower()
+            role_slug = r_name.replace("/", "_").replace(" ", "_").replace("-", "_").lower()
+
+            cur_mapped = get_mapped_templates(r_name)
+            mapped_templates_cell = {
+                "type": "mapped_templates",
+                "role_name": r_name,
+                "role_slug": role_slug,
+                "templates": cur_mapped,
+                "template_ids": [str(t["id"]) for t in cur_mapped]
+            }
 
             if r_lower in zabbix_group_map:
                 zg = zabbix_group_map[r_lower]
@@ -334,6 +360,7 @@ class ZabbixHostGroupsView(View):
                 gid,
                 zg_name_disp,
                 r_name,
+                mapped_templates_cell,
                 status_cell
             ])
 
@@ -341,15 +368,53 @@ class ZabbixHostGroupsView(View):
             for g in zabbix_groups:
                 g_name = g.get("name", "")
                 if g_name.strip().lower() not in processed_zabbix_lower:
+                    role_slug = g_name.replace("/", "_").replace(" ", "_").replace("-", "_").lower()
+                    cur_mapped = get_mapped_templates(g_name)
+                    mapped_templates_cell = {
+                        "type": "mapped_templates",
+                        "role_name": g_name,
+                        "role_slug": role_slug,
+                        "templates": cur_mapped,
+                        "template_ids": [str(t["id"]) for t in cur_mapped]
+                    }
                     items.append([
                         g.get("groupid", "-"),
                         g_name,
                         "—",
+                        mapped_templates_cell,
                         {"type": "none", "text": "Zabbix Only"}
                     ])
 
-        context = process_table_data(request, items, headers, 'Host Groups', has_status=False)
+        context = process_table_data(request, items, headers, 'Host Groups', has_status=False, extra_context={'all_templates': all_templates_list})
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
+
+
+class ZabbixMapTemplatesView(View):
+    def post(self, request):
+        role_name = request.POST.get('role_name')
+        template_ids = request.POST.getlist('template_ids')
+        
+        if not role_name:
+            messages.error(request, "Missing Role/Hostgroup name.")
+            return redirect('plugins:netbox_zabbix:hostgroups')
+
+        api = ZabbixAPI()
+        z_templates = api.get_templates()
+        
+        tmpl_lookup = {}
+        if isinstance(z_templates, list):
+            for t in z_templates:
+                tid = str(t.get("templateid", ""))
+                tname = t.get("name") or t.get("host") or f"Template {tid}"
+                if tid:
+                    tmpl_lookup[tid] = tname
+
+        template_names = [tmpl_lookup.get(str(tid), f"Template {tid}") for tid in template_ids]
+
+        save_mapped_templates(role_name, template_ids, template_names)
+
+        messages.success(request, f"Successfully updated Zabbix Template mappings for '{role_name}' ({len(template_ids)} template(s) mapped)!")
+        return redirect('plugins:netbox_zabbix:hostgroups')
 
 
 class ZabbixCreateHostGroupView(View):
@@ -489,7 +554,7 @@ class ZabbixHostsView(View):
             if not matching_zabbix_host and len(zh_name_candidates) > 0:
                 matching_zabbix_host = zh_name_candidates[0]
 
-            # Priority 4: Match by IP alone (e.g., NetBox devices sharing site IP monitored in Zabbix)
+            # Priority 4: Match by IP alone
             if not matching_zabbix_host and len(zh_ip_candidates) > 0:
                 matching_zabbix_host = zh_ip_candidates[0]
 
@@ -552,6 +617,7 @@ class ZabbixHostsView(View):
                 zabbix_status_disp = "—"
                 protocol_str = "—"
                 monitored_by_str = "—"
+                sync_cell = {"type": "push_device_button", "device_name": nb_name}
                 mismatch_count += 1
 
             row = [
@@ -623,6 +689,102 @@ class ZabbixHostsView(View):
             'q': q,
         }
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
+
+
+class ZabbixPushDeviceView(View):
+    def post(self, request):
+        device_name = request.POST.get('device_name')
+        if not device_name:
+            messages.error(request, "Missing Device name.")
+            return redirect('plugins:netbox_zabbix:hosts')
+
+        from dcim.models import Device
+        dev = Device.objects.filter(name=device_name).first()
+        if not dev:
+            messages.error(request, f"NetBox device '{device_name}' not found.")
+            return redirect('plugins:netbox_zabbix:hosts')
+
+        nb_ip = None
+        if dev.primary_ip4:
+            nb_ip = str(dev.primary_ip4.address).split('/')[0]
+        elif dev.primary_ip6:
+            nb_ip = str(dev.primary_ip6.address).split('/')[0]
+
+        if not nb_ip:
+            messages.error(request, f"Device '{device_name}' has no Primary IP assigned.")
+            return redirect('plugins:netbox_zabbix:hosts')
+
+        role_name = dev.role.name if dev.role else None
+
+        api = ZabbixAPI()
+
+        # 1. Host group ID
+        hostgroup_id = None
+        if role_name:
+            groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
+            if isinstance(groups, list) and len(groups) > 0:
+                hostgroup_id = groups[0].get("groupid")
+            else:
+                create_grp = api.call("hostgroup.create", {"name": role_name})
+                if isinstance(create_grp, dict) and "groupids" in create_grp and len(create_grp["groupids"]) > 0:
+                    hostgroup_id = create_grp["groupids"][0]
+
+        if not hostgroup_id:
+            groups = api.call("hostgroup.get", {"output": ["groupid", "name"]})
+            if isinstance(groups, list) and len(groups) > 0:
+                hostgroup_id = groups[0].get("groupid")
+            else:
+                hostgroup_id = "2"
+
+        # 2. Get mapped templates
+        mapped_tmpls = get_mapped_templates(role_name) if role_name else []
+        tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
+
+        # 3. Check if host already exists
+        existing = api.call("host.get", {"filter": {"host": device_name}})
+        if not (isinstance(existing, list) and len(existing) > 0):
+            existing = api.call("host.get", {"filter": {"name": device_name}})
+
+        if isinstance(existing, list) and len(existing) > 0:
+            hid = existing[0].get("hostid")
+            upd_params = {
+                "hostid": hid,
+                "groups": [{"groupid": hostgroup_id}]
+            }
+            if tmpl_payload:
+                upd_params["templates"] = tmpl_payload
+
+            res = api.call("host.update", upd_params)
+            if isinstance(res, dict) and "error" in res:
+                messages.error(request, f"Failed to update device '{device_name}' in Zabbix: {res['error']}")
+            else:
+                messages.success(request, f"Successfully updated device '{device_name}' in Zabbix with {len(mapped_tmpls)} mapped template(s)!")
+        else:
+            create_params = {
+                "host": device_name,
+                "name": device_name,
+                "interfaces": [
+                    {
+                        "type": 1,
+                        "main": 1,
+                        "useip": 1,
+                        "ip": nb_ip,
+                        "dns": "",
+                        "port": "10050"
+                    }
+                ],
+                "groups": [{"groupid": hostgroup_id}]
+            }
+            if tmpl_payload:
+                create_params["templates"] = tmpl_payload
+
+            res = api.call("host.create", create_params)
+            if isinstance(res, dict) and "error" in res:
+                messages.error(request, f"Failed to push device '{device_name}' to Zabbix: {res['error']}")
+            else:
+                messages.success(request, f"Successfully pushed device '{device_name}' (IP: {nb_ip}) to Zabbix with {len(mapped_tmpls)} mapped template(s)!")
+
+        return redirect('plugins:netbox_zabbix:hosts')
 
 
 class ZabbixSyncRoleView(View):

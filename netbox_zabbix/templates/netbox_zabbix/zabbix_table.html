@@ -187,6 +187,72 @@
                                                 <i class="mdi mdi-cloud-upload me-1"></i> Sync Hostgroup
                                             </button>
                                         </form>
+                                    {% elif cell.type == "mapped_templates" %}
+                                        <div class="d-flex align-items-center gap-1 flex-wrap">
+                                            {% if cell.templates %}
+                                                {% for t in cell.templates %}
+                                                    <span class="badge bg-info text-dark fw-semibold mb-1" style="font-size: 0.78rem; padding: 5px 8px;">
+                                                        <i class="mdi mdi-file-document-outline me-1"></i> {{ t.name }}
+                                                    </span>
+                                                {% endfor %}
+                                            {% else %}
+                                                <span class="text-muted small me-2">&mdash; No Templates &mdash;</span>
+                                            {% endif %}
+                                            
+                                            <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2 fw-bold" style="font-size: 0.78rem;" data-bs-toggle="modal" data-bs-target="#mapTemplateModal_{{ cell.role_slug }}">
+                                                <i class="mdi mdi-pencil me-1"></i> Map Templates
+                                            </button>
+
+                                            <!-- Template Mapping Modal -->
+                                            <div class="modal fade" id="mapTemplateModal_{{ cell.role_slug }}" tabindex="-1" aria-labelledby="modalLabel_{{ cell.role_slug }}" aria-hidden="true">
+                                                <div class="modal-dialog modal-dialog-centered modal-lg">
+                                                    <div class="modal-content text-start">
+                                                        <form action="{% url 'plugins:netbox_zabbix:map_templates' %}" method="post">
+                                                            {% csrf_token %}
+                                                            <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
+                                                            <div class="modal-header bg-primary text-white">
+                                                                <h5 class="modal-title" id="modalLabel_{{ cell.role_slug }}">
+                                                                    <i class="mdi mdi-file-document-multiple me-1"></i> Map Zabbix Templates &mdash; {{ cell.role_name }}
+                                                                </h5>
+                                                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                            </div>
+                                                            <div class="modal-body">
+                                                                <p class="text-muted small mb-3">
+                                                                    Select Zabbix templates to associate with <strong>{{ cell.role_name }}</strong>. When pushing devices with this role from NetBox to Zabbix, these templates will be assigned automatically.
+                                                                </p>
+                                                                <div class="row g-2" style="max-height: 350px; overflow-y: auto;">
+                                                                    {% for tmpl in all_templates %}
+                                                                        <div class="col-md-6">
+                                                                            <div class="form-check p-2 border rounded hover-bg-light">
+                                                                                <input class="form-check-input" type="checkbox" name="template_ids" value="{{ tmpl.templateid }}" id="tmpl_{{ cell.role_slug }}_{{ tmpl.templateid }}" {% if tmpl.templateid in cell.template_ids %}checked{% endif %}>
+                                                                                <label class="form-check-label w-100 cursor-pointer" for="tmpl_{{ cell.role_slug }}_{{ tmpl.templateid }}">
+                                                                                    <div class="fw-bold fs-7 text-dark">{{ tmpl.name }}</div>
+                                                                                    <div class="text-muted text-truncate fs-8" style="max-width: 250px;">{{ tmpl.host }}</div>
+                                                                                </label>
+                                                                            </div>
+                                                                        </div>
+                                                                    {% endfor %}
+                                                                </div>
+                                                            </div>
+                                                            <div class="modal-footer">
+                                                                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                                                                <button type="submit" class="btn btn-primary btn-sm fw-bold">
+                                                                    <i class="mdi mdi-content-save me-1"></i> Save Template Mapping
+                                                                </button>
+                                                            </div>
+                                                        </form>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    {% elif cell.type == "push_device_button" %}
+                                        <form action="{% url 'plugins:netbox_zabbix:push_device' %}" method="post" class="d-inline">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="device_name" value="{{ cell.device_name }}" />
+                                            <button type="submit" class="btn btn-sm btn-success fw-bold text-white px-2 py-1" style="font-size: 0.82rem;" title="Push Device from NetBox to Zabbix with Mapped Templates">
+                                                <i class="mdi mdi-cloud-upload me-1"></i> Push to Zabbix
+                                            </button>
+                                        </form>
                                     {% elif cell.type == "none" %}
                                         <span class="text-muted small">{{ cell.text|default:"&mdash;" }}</span>
                                     {% elif cell == "Monitored" or cell == "Online" or cell == "Active" %}
