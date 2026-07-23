@@ -51,17 +51,14 @@ class ZabbixAPI:
         return res, None
 
     def get_proxies(self):
-        # 1. Primary: Native Zabbix 7.0+ / 7.2+ / 8.0+ schema
         res = self.call("proxy.get", {
             "output": ["proxyid", "name", "operating_mode", "state", "version", "lastaccess", "description"]
         })
         if isinstance(res, dict) and "error" in res:
-            # 2. Fallback: Zabbix 6.x schema
             res = self.call("proxy.get", {
                 "output": ["proxyid", "host", "status", "description"]
             })
         if isinstance(res, dict) and "error" in res:
-            # 3. Universal Fallback: Basic proxy outputs
             res = self.call("proxy.get", {
                 "output": ["proxyid", "name"]
             })
@@ -99,20 +96,34 @@ class ZabbixAPI:
         })
 
     def get_hosts(self):
-        # 1. Zabbix 7.0+ schema with selectParentTemplates, selectHostGroups, and detailed interfaces
+        # 1. Primary Zabbix 7.0+ call with parent templates & details
         res = self.call("host.get", {
             "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-            "selectParentTemplates": ["templateid", "name"],
+            "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
             "selectHostGroups": ["groupid", "name"],
-            "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"]
+            "selectParentTemplates": ["templateid", "name"]
         })
         if isinstance(res, dict) and "error" in res:
-            # 2. Fallback using selectGroups for older Zabbix releases
+            # 2. Try selectGroups fallback
+            res = self.call("host.get", {
+                "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
+                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
+                "selectGroups": ["groupid", "name"],
+                "selectParentTemplates": ["templateid", "name"]
+            })
+        if isinstance(res, dict) and "error" in res:
+            # 3. Standard robust call without selectParentTemplates
+            res = self.call("host.get", {
+                "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
+                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port"],
+                "selectHostGroups": ["groupid", "name"]
+            })
+        if isinstance(res, dict) and "error" in res:
+            # 4. Universal Fallback
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
-                "selectParentTemplates": ["templateid", "name"],
-                "selectGroups": ["groupid", "name"],
-                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"]
+                "selectInterfaces": ["ip", "port", "type", "main"],
+                "selectGroups": ["groupid", "name"]
             })
         return res
 
