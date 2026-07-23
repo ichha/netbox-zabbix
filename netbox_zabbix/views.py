@@ -382,7 +382,7 @@ class ZabbixHostsView(View):
     def get(self, request):
         api = ZabbixAPI()
         
-        # 1. NetBox Devices with Primary IP assigned
+        # 1. NetBox Devices with Primary IP assigned (NetBox is Source of Truth)
         from dcim.models import Device
 
         qs = Device.objects.filter(
@@ -412,25 +412,26 @@ class ZabbixHostsView(View):
         except Exception:
             pass
 
-        zabbix_name_map = {}
         zabbix_ip_map = {}
+        zabbix_name_map = {}
         if isinstance(zabbix_hosts, list):
             for zh in zabbix_hosts:
-                zh_name = zh.get("host", "").strip()
-                zh_vis_name = zh.get("name", "").strip()
+                zh_name = (zh.get("host") or "").strip().lower()
+                zh_vis_name = (zh.get("name") or "").strip().lower()
                 if zh_name:
-                    zabbix_name_map[zh_name.lower()] = zh
+                    zabbix_name_map[zh_name] = zh
                 if zh_vis_name:
-                    zabbix_name_map[zh_vis_name.lower()] = zh
+                    zabbix_name_map[zh_vis_name] = zh
                     
                 interfaces = zh.get("interfaces", [])
                 if isinstance(interfaces, list):
                     for iface in interfaces:
-                        zip_addr = iface.get("ip", "").strip() if isinstance(iface, dict) else ""
-                        if zip_addr and zip_addr not in ["0.0.0.0", "127.0.0.1"]:
-                            zabbix_ip_map[zip_addr] = zh
+                        if isinstance(iface, dict):
+                            zip_addr = (iface.get("ip") or "").strip()
+                            if zip_addr and zip_addr not in ["0.0.0.0", "127.0.0.1"]:
+                                zabbix_ip_map[zip_addr] = zh
 
-        # 3. Process devices to compute rows and exact summary statistics
+        # 3. Process devices using IP-FIRST matching algorithm
         all_rows = []
         matched_count = 0
         mismatch_count = 0
@@ -448,8 +449,9 @@ class ZabbixHostsView(View):
             nb_status = str(dev.status).capitalize() if dev.status else "Active"
             nb_role = dev.role.name if dev.role else "—"
 
-            zh_by_name = zabbix_name_map.get(nb_name.lower())
+            # IP-FIRST MATCH: Search Zabbix host by NetBox Primary IP
             zh_by_ip = zabbix_ip_map.get(nb_ip) if nb_ip != "—" else None
+            zh_by_name = zabbix_name_map.get(nb_name.strip().lower())
 
             zabbix_host_disp = "—"
             zabbix_ip_disp = "—"
@@ -457,31 +459,20 @@ class ZabbixHostsView(View):
             protocol_str = "—"
             monitored_by_str = "—"
 
-            zh_target = zh_by_name or zh_by_ip
-            
-            # Check interface IPs for zh_by_name
-            zh_name_ips = []
-            main_z_ip = "No IP"
-            if zh_by_name:
-                zh_interfaces = zh_by_name.get("interfaces", [])
-                if isinstance(zh_interfaces, list):
-                    for iface in zh_interfaces:
-                        if isinstance(iface, dict):
-                            ip_val = iface.get("ip", "").strip()
-                            if ip_val:
-                                zh_name_ips.append(ip_val)
-                                if str(iface.get("main")) == "1":
-                                    main_z_ip = ip_val
-                    if not main_z_ip and zh_name_ips:
-                        main_z_ip = zh_name_ips[0]
+            match_status_type = "mismatch"
+            match_status_cell = {"type": "not_in_zabbix", "text": "Not in Zabbix"}
+            sync_cell = {"type": "none", "text": "—"}
 
-            ip_matched_on_name_host = (nb_ip != "—") and (nb_ip in zh_name_ips or nb_ip == main_z_ip)
+            if zh_by_ip:
+                # 1. Zabbix host found by IP! Now compare Device Name
+                z_host_name = zh_by_ip.get("host") or zh_by_ip.get("name") or "Unknown"
+                zabbix_host_disp = z_host_name
+                zabbix_ip_disp = nb_ip
 
-            if zh_target:
-                z_st = str(zh_target.get("status", "0"))
+                z_st = str(zh_by_ip.get("status", "0"))
                 zabbix_status_disp = "Monitored" if z_st == "0" else "Disabled"
 
-                interfaces = zh_target.get("interfaces", [])
+                interfaces = zh_by_ip.get("interfaces", [])
                 if isinstance(interfaces, list) and len(interfaces) > 0:
                     main_iface = interfaces[0]
                     for iface in interfaces:
@@ -491,9 +482,9 @@ class ZabbixHostsView(View):
                     if_type = str(main_iface.get("type", "1"))
                     protocol_str = "SNMP" if if_type == "2" else "IPMI" if if_type == "3" else "JMX" if if_type == "4" else "Agent"
 
-                proxy_id = str(zh_target.get("proxyid") or "0")
-                proxy_group_id = str(zh_target.get("proxy_groupid") or "0")
-                monitored_by = str(zh_target.get("monitored_by") or "0")
+                proxy_id = str(zh_by_ip.get("proxyid") or "0")
+                proxy_group_id = str(zh_by_ip.get("proxy_groupid") or "0")
+                monitored_by = str(zh_by_ip.get("monitored_by") or "0")
 
                 if (monitored_by == "1" or proxy_id != "0") and proxy_id in proxy_map:
                     monitored_by_str = f"Proxy: {proxy_map[proxy_id]}"
@@ -504,45 +495,71 @@ class ZabbixHostsView(View):
                 else:
                     monitored_by_str = "Server"
 
-            match_status_type = "not_in_zabbix"
-            match_status_cell = {"type": "not_in_zabbix", "text": "Not in Zabbix"}
-            sync_cell = {"type": "none", "text": "—"}
+                # Name Comparison
+                if nb_name.strip().lower() == z_host_name.strip().lower():
+                    # Both IP and Name Match!
+                    match_status_type = "matched"
+                    match_status_cell = {"type": "matched", "text": "Matched"}
+                    matched_count += 1
 
-            if zh_by_name and ip_matched_on_name_host:
-                # True Match on Name AND IP
-                zabbix_host_disp = zh_by_name.get("host", "-")
-                zabbix_ip_disp = nb_ip
-                match_status_type = "matched"
-                match_status_cell = {"type": "matched", "text": "Matched"}
-                matched_count += 1
+                    zabbix_groups = zh_by_ip.get("hostgroups", []) or zh_by_ip.get("groups", [])
+                    zabbix_group_names = [g.get("name") for g in zabbix_groups if isinstance(g, dict) and g.get("name")]
+                    role_synced = any(nb_role.lower() == zg.lower() for zg in zabbix_group_names) if nb_role != "—" else False
 
-                zabbix_groups = zh_by_name.get("hostgroups", []) or zh_by_name.get("groups", [])
-                zabbix_group_names = [g.get("name") for g in zabbix_groups if isinstance(g, dict) and g.get("name")]
-                role_synced = any(nb_role.lower() == zg.lower() for zg in zabbix_group_names) if nb_role != "—" else False
-                
-                if role_synced:
-                    sync_cell = {"type": "synced", "text": "Synced"}
-                elif nb_role != "—":
-                    sync_cell = {"type": "sync_button", "host_id": zh_by_name.get("hostid"), "role_name": nb_role}
+                    if role_synced:
+                        sync_cell = {"type": "synced", "text": "Synced"}
+                    elif nb_role != "—":
+                        sync_cell = {"type": "sync_button", "host_id": zh_by_ip.get("hostid"), "role_name": nb_role}
+                else:
+                    # IP Matches, but Name Mismatches!
+                    match_status_type = "mismatch"
+                    match_status_cell = {"type": "name_mismatch", "text": f"Name Mismatch ({z_host_name})"}
+                    mismatch_count += 1
 
             elif zh_by_name:
-                # Name matches, but IP mismatches in Zabbix
-                zabbix_host_disp = zh_by_name.get("host", "-")
+                # 2. No Zabbix host with this IP, but Zabbix host found by Name (IP Mismatch)
+                zabbix_host_disp = zh_by_name.get("host") or zh_by_name.get("name") or "-"
+                main_z_ip = "No IP"
+                interfaces = zh_by_name.get("interfaces", [])
+                if isinstance(interfaces, list) and len(interfaces) > 0:
+                    main_z_ip = interfaces[0].get("ip", "No IP")
+                    for iface in interfaces:
+                        if isinstance(iface, dict) and str(iface.get("main")) == "1":
+                            main_z_ip = iface.get("ip", "No IP")
+                            break
                 zabbix_ip_disp = main_z_ip
+
+                z_st = str(zh_by_name.get("status", "0"))
+                zabbix_status_disp = "Monitored" if z_st == "0" else "Disabled"
+
+                if isinstance(interfaces, list) and len(interfaces) > 0:
+                    main_iface = interfaces[0]
+                    for iface in interfaces:
+                        if str(iface.get("main")) == "1":
+                            main_iface = iface
+                            break
+                    if_type = str(main_iface.get("type", "1"))
+                    protocol_str = "SNMP" if if_type == "2" else "IPMI" if if_type == "3" else "JMX" if if_type == "4" else "Agent"
+
+                proxy_id = str(zh_by_name.get("proxyid") or "0")
+                proxy_group_id = str(zh_by_name.get("proxy_groupid") or "0")
+                monitored_by = str(zh_by_name.get("monitored_by") or "0")
+
+                if (monitored_by == "1" or proxy_id != "0") and proxy_id in proxy_map:
+                    monitored_by_str = f"Proxy: {proxy_map[proxy_id]}"
+                elif proxy_id != "0":
+                    monitored_by_str = f"Proxy (ID {proxy_id})"
+                elif monitored_by == "2" or proxy_group_id != "0":
+                    monitored_by_str = f"Proxy Group (ID {proxy_group_id})"
+                else:
+                    monitored_by_str = "Server"
+
                 match_status_type = "mismatch"
                 match_status_cell = {"type": "ip_mismatch", "text": f"IP Mismatch ({main_z_ip})"}
                 mismatch_count += 1
 
-            elif zh_by_ip:
-                # IP matches, but Name mismatches in Zabbix
-                z_name_found = zh_by_ip.get("host", "Unknown")
-                zabbix_host_disp = z_name_found
-                zabbix_ip_disp = nb_ip
-                match_status_type = "mismatch"
-                match_status_cell = {"type": "name_mismatch", "text": f"Name Mismatch ({z_name_found})"}
-                mismatch_count += 1
-
             else:
+                # 3. Device Not in Zabbix
                 match_status_type = "mismatch"
                 match_status_cell = {"type": "not_in_zabbix", "text": "Not in Zabbix"}
                 mismatch_count += 1
