@@ -440,6 +440,21 @@ class ZabbixHostsView(View):
                     if zip_addr and zip_addr not in ["0.0.0.0", "127.0.0.1"]:
                         zabbix_ip_map[zip_addr] = zh
 
+        # 3. Calculate exact Matched count for NetBox devices against Zabbix
+        matched_count = 0
+        for dev in qs:
+            nb_name = (dev.name or "").strip().lower()
+            nb_ip = ""
+            if dev.primary_ip4:
+                nb_ip = str(dev.primary_ip4.address).split('/')[0]
+            elif dev.primary_ip6:
+                nb_ip = str(dev.primary_ip6.address).split('/')[0]
+
+            if (nb_name and nb_name in zabbix_name_map) or (nb_ip and nb_ip in zabbix_ip_map):
+                matched_count += 1
+
+        unmatched_count = max(0, total_devices - matched_count)
+
         headers = [
             "NetBox Device Name",
             "NetBox Primary IP",
@@ -451,7 +466,7 @@ class ZabbixHostsView(View):
             "Role Sync"
         ]
 
-        # 3. Build table rows ONLY for NetBox devices with Primary IP assigned!
+        # 4. Build table rows ONLY for current page
         page_devices = list(page_obj.object_list)
         page_rows = []
 
@@ -525,8 +540,8 @@ class ZabbixHostsView(View):
             'page_obj': page_obj,
             'per_page': per_page_param if per_page_param.lower() == 'all' else per_page,
             'total_devices': total_devices,
-            'synced_devices': len(zabbix_name_map),
-            'devices_to_sync': max(0, total_devices - len(zabbix_name_map)),
+            'synced_devices': matched_count,
+            'devices_to_sync': unmatched_count,
             'has_status': True,
             'q': q,
         }
