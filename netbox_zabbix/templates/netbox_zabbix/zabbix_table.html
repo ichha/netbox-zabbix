@@ -136,7 +136,178 @@
                 <i class="mdi mdi-alert-circle me-1"></i>
                 <strong>Failed to connect to Zabbix API:</strong> {{ error }}
             </div>
+        {% elif is_hosts_view and page_obj.object_list %}
+            <!-- 2-ROW COMPARISON TABLE FOR HOSTS PAGE -->
+            <table class="table table-hover align-middle mb-0 border">
+                <thead>
+                    <tr class="table-dark text-white">
+                        <th style="width: 100px;">Source</th>
+                        <th>Device Name</th>
+                        <th>Primary IP</th>
+                        <th>Status</th>
+                        <th>Role / Host Groups</th>
+                        <th>Configuration, Templates & SNMP Parameters</th>
+                        <th class="text-end" style="width: 170px;">Match & Sync Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in page_obj.object_list %}
+                        <!-- ROW 1: NETBOX DATA -->
+                        <tr class="bg-white border-top border-2 border-secondary">
+                            <td class="align-middle">
+                                <span class="badge bg-success text-white fw-bold px-2 py-1 fs-8">
+                                    <i class="mdi mdi-cube-outline me-1"></i> NetBox
+                                </span>
+                            </td>
+                            <td class="align-middle fw-bold text-primary fs-6">{{ item.netbox_name }}</td>
+                            <td class="align-middle"><code class="fw-bold fs-7">{{ item.netbox_ip }}</code></td>
+                            <td class="align-middle">
+                                <span class="badge bg-success text-white fw-bold" style="font-size: 0.82rem; padding: 5px 9px;">
+                                    <i class="mdi mdi-check-circle me-1"></i> {{ item.netbox_status }}
+                                </span>
+                            </td>
+                            <td class="align-middle">
+                                <span class="badge bg-secondary text-white fw-bold">{{ item.netbox_role }}</span>
+                            </td>
+                            <td class="align-middle text-muted small">
+                                Mapped Hostgroup: <strong class="text-dark">{{ item.netbox_mapped_hostgroup }}</strong>
+                            </td>
+                            <td rowspan="2" class="align-middle text-end border-start bg-body-tertiary">
+                                <div class="d-flex flex-column align-items-end gap-2 p-1">
+                                    {% if item.match_status == "matched" %}
+                                        <span class="badge bg-success text-white fw-bold p-2 w-100" style="font-size: 0.82rem;">
+                                            <i class="mdi mdi-check-circle me-1"></i> Matched
+                                        </span>
+                                        {% if item.role_synced %}
+                                            <span class="badge bg-success text-white fw-bold w-100" style="font-size: 0.82rem; padding: 6px;">
+                                                <i class="mdi mdi-check-circle me-1"></i> Synced
+                                            </span>
+                                        {% else %}
+                                            <form action="{% url 'plugins:netbox_zabbix:sync_role' %}" method="post" class="w-100">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="host_id" value="{{ item.zabbix_hostid }}" />
+                                                <input type="hidden" name="role_name" value="{{ item.netbox_role }}" />
+                                                <button type="submit" class="btn btn-sm btn-primary fw-bold text-white w-100 py-1" style="font-size: 0.8rem;" title="Sync Role to Zabbix Host Group">
+                                                    <i class="mdi mdi-cloud-upload me-1"></i> Sync Role
+                                                </button>
+                                            </form>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="badge bg-danger text-white fw-bold p-2 w-100" style="font-size: 0.82rem;">
+                                            <i class="mdi mdi-close-circle me-1"></i> Not in Zabbix
+                                        </span>
+                                        <form action="{% url 'plugins:netbox_zabbix:push_device' %}" method="post" class="w-100">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="device_name" value="{{ item.netbox_name }}" />
+                                            <button type="submit" class="btn btn-sm btn-success fw-bold text-white w-100 py-1" style="font-size: 0.8rem;" title="Push Device from NetBox to Zabbix with Mapped Templates">
+                                                <i class="mdi mdi-cloud-upload me-1"></i> Push to Zabbix
+                                            </button>
+                                        </form>
+                                    {% endif %}
+                                </div>
+                            </td>
+                        </tr>
+
+                        <!-- ROW 2: ZABBIX DATA -->
+                        <tr class="bg-body-tertiary border-bottom border-3 border-secondary">
+                            <td class="align-middle">
+                                <span class="badge bg-primary text-white fw-bold px-2 py-1 fs-8">
+                                    <i class="mdi mdi-zabbix me-1"></i> Zabbix
+                                </span>
+                            </td>
+                            <td class="align-middle fw-bold text-dark fs-7">
+                                {{ item.zabbix_name }}
+                            </td>
+                            <td class="align-middle">
+                                {% if item.zabbix_ip != "—" %}
+                                    <code class="fw-bold fs-7">{{ item.zabbix_ip }}</code>
+                                    {% if item.zabbix_port %}
+                                        <span class="text-muted small">:(Port {{ item.zabbix_port }})</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-muted small">&mdash;</span>
+                                {% endif %}
+                            </td>
+                            <td class="align-middle">
+                                {% if item.zabbix_status == "Monitored" %}
+                                    <span class="badge bg-success text-white fw-bold" style="font-size: 0.82rem; padding: 5px 9px;">
+                                        <i class="mdi mdi-check-circle me-1"></i> Monitored
+                                    </span>
+                                {% elif item.zabbix_status == "Disabled" %}
+                                    <span class="badge bg-secondary text-white fw-bold" style="font-size: 0.82rem; padding: 5px 9px;">Disabled</span>
+                                {% else %}
+                                    <span class="text-muted small">&mdash;</span>
+                                {% endif %}
+                            </td>
+                            <td class="align-middle">
+                                {% if item.zabbix_hostgroups %}
+                                    <div class="d-flex flex-column gap-1">
+                                        {% for hg in item.zabbix_hostgroups %}
+                                            <span class="badge bg-info text-dark fw-semibold" style="font-size: 0.76rem;">{{ hg }}</span>
+                                        {% endfor %}
+                                    </div>
+                                {% else %}
+                                    <span class="text-muted small">&mdash;</span>
+                                {% endif %}
+                            </td>
+                            <td class="align-middle py-2">
+                                {% if item.zabbix_exists %}
+                                    <div class="d-flex flex-column gap-1 fs-8 text-dark">
+                                        <!-- Templates Attached -->
+                                        <div>
+                                            <span class="fw-bold text-secondary me-1"><i class="mdi mdi-file-document-outline me-1"></i>Templates Attached:</span>
+                                            {% if item.zabbix_templates %}
+                                                <div class="d-flex flex-column gap-1 align-items-start my-1">
+                                                    {% for tmpl in item.zabbix_templates %}
+                                                        <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm" style="font-size: 0.8rem; padding: 3px 8px; border-radius: 4px;">
+                                                            <i class="mdi mdi-file-document-outline text-primary me-1"></i> {{ tmpl }}
+                                                        </span>
+                                                    {% endfor %}
+                                                </div>
+                                            {% else %}
+                                                <span class="text-muted small me-2">None</span>
+                                            {% endif %}
+                                        </div>
+
+                                        <!-- Interface & SNMP Parameters -->
+                                        <div class="mt-1">
+                                            <span class="fw-bold text-secondary me-1"><i class="mdi mdi-transit-connection-variant me-1"></i>Interface & SNMP:</span>
+                                            <span class="badge bg-info text-dark ms-1">{{ item.zabbix_protocol }}</span>
+                                            {% if item.snmp_version != "—" %}
+                                                <span class="badge bg-primary text-white ms-1">{{ item.snmp_version }}</span>
+                                            {% endif %}
+                                            {% if item.snmp_community != "—" %}
+                                                <span class="badge bg-light text-dark border ms-1" title="SNMP Community">Comm: {{ item.snmp_community }}</span>
+                                            {% endif %}
+                                            {% if item.snmpv3_secname != "—" %}
+                                                <span class="badge bg-light text-dark border ms-1">SecName: {{ item.snmpv3_secname }}</span>
+                                                <span class="badge bg-light text-dark border ms-1">{{ item.snmpv3_seclevel }}</span>
+                                                {% if item.snmpv3_authproto != "—" %}
+                                                    <span class="badge bg-light text-dark border ms-1">Auth: {{ item.snmpv3_authproto }}</span>
+                                                {% endif %}
+                                                {% if item.snmpv3_privproto != "—" %}
+                                                    <span class="badge bg-light text-dark border ms-1">Priv: {{ item.snmpv3_privproto }}</span>
+                                                {% endif %}
+                                            {% endif %}
+                                        </div>
+
+                                        <!-- Proxy Info -->
+                                        <div class="mt-1">
+                                            <span class="fw-bold text-secondary me-1"><i class="mdi mdi-server-network me-1"></i>Monitored By:</span>
+                                            <span class="text-primary fw-bold ms-1">{{ item.zabbix_monitored_by }}</span>
+                                        </div>
+                                    </div>
+                                {% else %}
+                                    <span class="text-muted small">&mdash; Device not configured in Zabbix &mdash;</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
         {% elif page_obj.object_list %}
+            <!-- STANDARD TABLE FOR OTHER PAGES (Host Groups, Templates, Proxies, etc.) -->
             <table class="table table-hover table-headings align-middle mb-0">
                 <thead>
                     <tr>

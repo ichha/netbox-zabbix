@@ -526,8 +526,8 @@ class ZabbixHostsView(View):
                                 if zh not in zabbix_ip_map[zip_addr]:
                                     zabbix_ip_map[zip_addr].append(zh)
 
-        # 3. Flexible Name/IP Match Engine
-        all_rows = []
+        # 3. Build 2-Row Comparison Block per Device
+        all_blocks = []
         matched_count = 0
         mismatch_count = 0
 
@@ -578,22 +578,54 @@ class ZabbixHostsView(View):
             if not matching_zabbix_host and len(zh_ip_candidates) > 0:
                 matching_zabbix_host = zh_ip_candidates[0]
 
-            sync_cell = {"type": "none", "text": "—"}
+            item = {
+                "netbox_name": nb_name,
+                "netbox_ip": nb_ip,
+                "netbox_status": nb_status,
+                "netbox_role": nb_role,
+                "netbox_mapped_hostgroup": nb_role,
+                "match_status": "matched" if matching_zabbix_host else "mismatch",
+                "role_synced": False,
+                "zabbix_exists": False,
+                "zabbix_hostid": "",
+                "zabbix_name": "—",
+                "zabbix_ip": "—",
+                "zabbix_port": "",
+                "zabbix_status": "—",
+                "zabbix_hostgroups": [],
+                "zabbix_templates": [],
+                "zabbix_protocol": "—",
+                "zabbix_monitored_by": "—",
+                "snmp_version": "—",
+                "snmp_community": "—",
+                "snmpv3_secname": "—",
+                "snmpv3_seclevel": "—",
+                "snmpv3_authproto": "—",
+                "snmpv3_privproto": "—",
+            }
 
             if matching_zabbix_host:
-                zh_target = matching_zabbix_host
-                match_status_type = "matched"
-                match_status_cell = {"type": "matched", "text": "Matched"}
                 matched_count += 1
-
+                zh_target = matching_zabbix_host
+                item["zabbix_exists"] = True
+                item["zabbix_hostid"] = zh_target.get("hostid", "")
+                
                 c_tech = zh_target.get("host", "")
                 c_vis = zh_target.get("name", "")
-                zabbix_host_disp = c_vis if c_vis else c_tech
-                zabbix_ip_disp = nb_ip if nb_ip != "—" else "No IP"
+                item["zabbix_name"] = c_vis if c_vis else c_tech
 
                 z_st = str(zh_target.get("status", "0"))
-                zabbix_status_disp = "Monitored" if z_st == "0" else "Disabled"
+                item["zabbix_status"] = "Monitored" if z_st == "0" else "Disabled"
 
+                # Attached templates
+                z_templates = zh_target.get("parentTemplates", []) or zh_target.get("templates", [])
+                item["zabbix_templates"] = [t.get("name") for t in z_templates if isinstance(t, dict) and t.get("name")]
+
+                # Host groups
+                z_groups = zh_target.get("hostgroups", []) or zh_target.get("groups", [])
+                item["zabbix_hostgroups"] = [g.get("name") for g in z_groups if isinstance(g, dict) and g.get("name")]
+
+                # Interfaces & SNMP details
                 interfaces = zh_target.get("interfaces", [])
                 if isinstance(interfaces, list) and len(interfaces) > 0:
                     main_iface = interfaces[0]
@@ -601,99 +633,89 @@ class ZabbixHostsView(View):
                         if str(iface.get("main")) == "1":
                             main_iface = iface
                             break
-                    if_type = str(main_iface.get("type", "1"))
-                    protocol_str = "SNMP" if if_type == "2" else "IPMI" if if_type == "3" else "JMX" if if_type == "4" else "Agent"
-                else:
-                    protocol_str = "—"
+
+                    zip_addr = main_iface.get("ip")
+                    item["zabbix_ip"] = zip_addr if zip_addr else nb_ip
+                    item["zabbix_port"] = str(main_iface.get("port") or "")
+
+                    t_val = str(main_iface.get("type", "1"))
+                    item["zabbix_protocol"] = "SNMP" if t_val == "2" else "IPMI" if t_val == "3" else "JMX" if t_val == "4" else "Agent"
+
+                    details = main_iface.get("details", {})
+                    if isinstance(details, dict):
+                        ver = str(details.get("version", ""))
+                        if ver == "1":
+                            item["snmp_version"] = "SNMPv1"
+                            item["snmp_community"] = details.get("community", "{$SNMP_COMMUNITY}")
+                        elif ver == "2":
+                            item["snmp_version"] = "SNMPv2c"
+                            item["snmp_community"] = details.get("community", "{$SNMP_COMMUNITY}")
+                        elif ver == "3":
+                            item["snmp_version"] = "SNMPv3"
+                            item["snmpv3_secname"] = details.get("securityname", "—")
+                            
+                            s_lvl = str(details.get("securitylevel", "0"))
+                            item["snmpv3_seclevel"] = "authPriv" if s_lvl == "2" else "authNoPriv" if s_lvl == "1" else "noAuthNoPriv"
+
+                            a_pr = str(details.get("authprotocol", "0"))
+                            item["snmpv3_authproto"] = "SHA" if a_pr in ["1", "3", "SHA"] else "MD5" if a_pr in ["0", "MD5"] else str(a_pr)
+
+                            p_pr = str(details.get("privprotocol", "0"))
+                            item["snmpv3_privproto"] = "AES" if p_pr in ["1", "AES"] else "DES" if p_pr in ["0", "DES"] else str(p_pr)
 
                 proxy_id = str(zh_target.get("proxyid") or "0")
                 proxy_group_id = str(zh_target.get("proxy_groupid") or "0")
                 monitored_by = str(zh_target.get("monitored_by") or "0")
 
                 if (monitored_by == "1" or proxy_id != "0") and proxy_id in proxy_map:
-                    monitored_by_str = f"Proxy: {proxy_map[proxy_id]}"
+                    item["zabbix_monitored_by"] = f"Proxy: {proxy_map[proxy_id]}"
                 elif proxy_id != "0":
-                    monitored_by_str = f"Proxy (ID {proxy_id})"
+                    item["zabbix_monitored_by"] = f"Proxy (ID {proxy_id})"
                 elif monitored_by == "2" or proxy_group_id != "0":
-                    monitored_by_str = f"Proxy Group (ID {proxy_group_id})"
+                    item["zabbix_monitored_by"] = f"Proxy Group (ID {proxy_group_id})"
                 else:
-                    monitored_by_str = "Server"
+                    item["zabbix_monitored_by"] = "Server"
 
-                zabbix_groups = zh_target.get("hostgroups", []) or zh_target.get("groups", [])
-                zabbix_group_names = [g.get("name") for g in zabbix_groups if isinstance(g, dict) and g.get("name")]
-                role_synced = any(nb_role.lower() == zg.lower() for zg in zabbix_group_names) if nb_role != "—" else False
-
-                if role_synced:
-                    sync_cell = {"type": "synced", "text": "Synced"}
-                elif nb_role != "—":
-                    sync_cell = {"type": "sync_button", "host_id": zh_target.get("hostid"), "role_name": nb_role}
-
+                item["role_synced"] = any(nb_role.lower() == zg.lower() for zg in item["zabbix_hostgroups"]) if nb_role != "—" else False
             else:
-                # Neither Name nor IP exists in Zabbix
-                match_status_type = "mismatch"
-                match_status_cell = {"type": "not_in_zabbix", "text": "Not in Zabbix"}
-                zabbix_host_disp = "—"
-                zabbix_ip_disp = "—"
-                zabbix_status_disp = "—"
-                protocol_str = "—"
-                monitored_by_str = "—"
-                sync_cell = {"type": "push_device_button", "device_name": nb_name}
                 mismatch_count += 1
 
-            row = [
-                nb_name,
-                nb_ip,
-                nb_status,
-                nb_role,
-                zabbix_host_disp,
-                zabbix_ip_disp,
-                zabbix_status_disp,
-                protocol_str,
-                monitored_by_str,
-                match_status_cell,
-                sync_cell
-            ]
-            row_match_type = match_status_type
-            all_rows.append((row, row_match_type))
+            all_blocks.append(item)
 
         # 4. Filter rows if card clicked
         status_filter = request.GET.get('status', '').strip().lower()
         if status_filter in ['synced', 'active', 'matched']:
-            filtered_rows = [r[0] for r in all_rows if r[1] == 'matched']
+            filtered_blocks = [item for item in all_blocks if item["match_status"] == 'matched']
         elif status_filter in ['pending', 'inactive', 'mismatch', 'disabled']:
-            filtered_rows = [r[0] for r in all_rows if r[1] == 'mismatch']
+            filtered_blocks = [item for item in all_blocks if item["match_status"] == 'mismatch']
         else:
-            filtered_rows = [r[0] for r in all_rows]
+            filtered_blocks = list(all_blocks)
 
         # 5. Pagination
         per_page_param = request.GET.get('per_page', '50')
         page_param = request.GET.get('page', '1')
 
         try:
-            per_page = int(per_page_param) if per_page_param.lower() != 'all' else len(filtered_rows)
+            per_page = int(per_page_param) if per_page_param.lower() != 'all' else len(filtered_blocks)
             if per_page <= 0:
                 per_page = 50
         except ValueError:
             per_page = 50
 
-        paginator = Paginator(filtered_rows, per_page if per_page > 0 else 50)
+        paginator = Paginator(filtered_blocks, per_page if per_page > 0 else 50)
         try:
             page_obj = paginator.page(page_param)
         except Exception:
             page_obj = paginator.page(1)
 
         headers = [
-            "NetBox Device Name",
-            "NetBox Primary IP",
-            "NetBox Status",
-            "NetBox Device Role",
-            "Zabbix Host Name",
-            "Zabbix Primary IP",
-            "Zabbix Status",
-            "Protocol",
-            "Monitored By",
-            "Match Status",
-            "Role Sync"
+            "Source System",
+            "Device Name",
+            "Primary IP",
+            "Status",
+            "Device Role / Host Groups",
+            "Configuration & SNMP Parameters",
+            "Match & Sync Status"
         ]
 
         context = {
@@ -706,6 +728,7 @@ class ZabbixHostsView(View):
             'devices_to_sync': mismatch_count,
             'status_filter': status_filter,
             'has_status': True,
+            'is_hosts_view': True,
             'q': q,
         }
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
