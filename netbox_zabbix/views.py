@@ -382,10 +382,12 @@ class ZabbixHostsView(View):
     def get(self, request):
         api = ZabbixAPI()
         
-        # 1. Database-Level Filtering on NetBox Devices
+        # 1. Base QuerySet: ONLY NetBox devices with Primary IP assigned!
         from dcim.models import Device
 
-        qs = Device.objects.select_related('role', 'primary_ip4', 'primary_ip6').all()
+        qs = Device.objects.filter(
+            Q(primary_ip4__isnull=False) | Q(primary_ip6__isnull=False)
+        ).select_related('role', 'primary_ip4', 'primary_ip6')
 
         q = request.GET.get('q', '').strip()
         if q:
@@ -449,7 +451,7 @@ class ZabbixHostsView(View):
             "Role Sync"
         ]
 
-        # 3. Build table rows ONLY for the 50 items on current page!
+        # 3. Build table rows ONLY for NetBox devices with Primary IP assigned!
         page_devices = list(page_obj.object_list)
         page_rows = []
 
