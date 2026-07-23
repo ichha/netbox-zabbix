@@ -1,0 +1,52 @@
+{% extends 'generic/object.html' %}
+
+{% block content %}
+<div class="row">
+    <div class="col col-md-6">
+        <div class="card">
+            <h5 class="card-header">Zabbix Server Configuration</h5>
+            <div class="card-body">
+                <table class="table table-hover attr-table">
+                    <tbody>
+                        <tr>
+                            <th scope="row">Name</th>
+                            <td>{{ object.name }}</td>
+                        </tr>
+                        <tr>
+                            <th scope="row">API URL</th>
+                            <td><code>{{ object.url }}</code></td>
+                        </tr>
+                        <tr>
+                            <th scope="row">API Token</th>
+                            <td><code>{{ object.token|slice:":10" }}... [hidden]</code></td>
+                        </tr>
+                        {% if object.description %}
+                        <tr>
+                            <th scope="row">Description</th>
+                            <td>{{ object.description }}</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col col-md-6">
+        <div class="card">
+            <h5 class="card-header">Synchronization Control</h5>
+            <div class="card-body text-center py-5">
+                <p class="text-muted mb-4">
+                    Import or update Proxies, Proxy Groups, Templates, Template Groups, Global Macros, Host Groups, and Hosts from this Zabbix Server to NetBox.
+                </p>
+                <form action="{% url 'plugins:netbox_zabbix:zabbixserver_sync' pk=object.pk %}" method="post">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary btn-lg px-5">
+                        <i class="mdi mdi-sync"></i> Sync from Zabbix
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
