@@ -26,18 +26,18 @@ class ZabbixAPI:
             
         headers = {"Content-Type": "application/json-rpc"}
         try:
-            response = requests.post(self.url, json=payload, headers=headers, timeout=8)
+            response = requests.post(self.url, json=payload, headers=headers, timeout=10)
             response.raise_for_status()
             res_json = response.json()
             if "error" in res_json:
                 error_msg = res_json['error'].get('message', 'Unknown Error')
                 error_data = res_json['error'].get('data', '')
-                logger.error(f"Zabbix API Error: {error_msg} - {error_data}")
+                logger.error(f"Zabbix API Error [{method}]: {error_msg} - {error_data}")
                 return {"error": f"{error_msg} ({error_data})"}
             self.id += 1
             return res_json.get("result", [])
         except Exception as e:
-            logger.error(f"Zabbix Connection Error: {e}")
+            logger.error(f"Zabbix Connection Error [{method}]: {e}")
             return {"error": str(e)}
 
     def get_api_version(self):
@@ -48,41 +48,38 @@ class ZabbixAPI:
 
     def get_proxies(self):
         return self.call("proxy.get", {
-            "output": ["proxyid", "host", "status", "description"]
+            "output": "extend"
         })
 
     def get_proxy_groups(self):
         return self.call("proxygroup.get", {
-            "output": ["proxy_groupid", "name", "state", "description"]
+            "output": "extend"
         })
 
     def get_templates(self):
         return self.call("template.get", {
-            "output": ["templateid", "host", "name", "description"]
+            "output": "extend"
         })
 
     def get_template_groups(self):
         return self.call("templategroup.get", {
-            "output": ["groupid", "name"]
+            "output": "extend"
         })
 
     def get_macros(self):
         return self.call("usermacro.get", {
             "globalmacro": True,
-            "output": ["globalmacroid", "macro", "value", "description"]
+            "output": "extend"
         })
 
     def get_host_groups(self):
         return self.call("hostgroup.get", {
-            "output": ["groupid", "name"]
+            "output": "extend"
         })
 
     def get_hosts(self):
-        return self.call("host", "host.get", {
-            "output": ["hostid", "host", "name", "status", "description"],
-            "selectInterfaces": ["ip", "port", "main", "type"]
-        }) if False else self.call("host.get", {
-            "output": ["hostid", "host", "name", "status", "description"],
+        return self.call("host.get", {
+            "output": "extend",
             "selectInterfaces": ["ip", "port", "main", "type"]
         })
 
@@ -94,10 +91,12 @@ class ZabbixAPI:
         if isinstance(hosts, list):
             for h in hosts:
                 for t in h.get("tags", []):
-                    tags_set.add((t.get("tag", ""), t.get("value", "")))
+                    if isinstance(t, dict):
+                        tags_set.add((t.get("tag", ""), t.get("value", "")))
         if isinstance(templates, list):
             for tm in templates:
                 for t in tm.get("tags", []):
-                    tags_set.add((t.get("tag", ""), t.get("value", "")))
+                    if isinstance(t, dict):
+                        tags_set.add((t.get("tag", ""), t.get("value", "")))
                     
         return [{"tag": t[0], "value": t[1]} for t in sorted(tags_set)]

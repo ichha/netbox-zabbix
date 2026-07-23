@@ -1,11 +1,24 @@
 {% extends 'base/layout.html' %}
 
-{% block title %}Zabbix Servers{% endblock %}
+{% block header %}
+<div class="d-flex justify-content-between align-items-center my-3">
+    <div>
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb mb-1">
+                <li class="breadcrumb-item"><a href="{% url 'home' %}">Home</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'plugins:netbox_zabbix:servers' %}">Zabbix</a></li>
+                <li class="breadcrumb-item active" aria-current="page">Servers</li>
+            </ol>
+        </nav>
+        <h1 class="h2 mb-0">Zabbix Servers</h1>
+    </div>
+</div>
+{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col col-md-8">
-        <div class="card">
+        <div class="card mb-3">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0"><i class="mdi mdi-server me-2"></i>Zabbix Server Connection</h5>
                 {% if connected %}
@@ -29,7 +42,7 @@
                             <th scope="row">Zabbix Server Version</th>
                             <td>
                                 {% if zabbix_version %}
-                                    <span class="badge bg-primary">v{{ zabbix_version }}</span>
+                                    <span class="badge bg-primary fs-6">v{{ zabbix_version }}</span>
                                 {% else %}
                                     <span class="text-danger">Unable to query version</span>
                                 {% endif %}
@@ -39,9 +52,9 @@
                             <th scope="row">Connection Status</th>
                             <td>
                                 {% if connected %}
-                                    <span class="text-success"><i class="mdi mdi-check-circle me-1"></i>Successfully authenticated with Zabbix API</span>
+                                    <span class="text-success fw-bold"><i class="mdi mdi-check-circle me-1"></i>Successfully authenticated with Zabbix API</span>
                                 {% else %}
-                                    <span class="text-danger"><i class="mdi mdi-alert-circle me-1"></i>{{ error }}</span>
+                                    <span class="text-danger fw-bold"><i class="mdi mdi-alert-circle me-1"></i>{{ error }}</span>
                                 {% endif %}
                             </td>
                         </tr>
@@ -51,20 +64,20 @@
         </div>
     </div>
     <div class="col col-md-4">
-        <div class="card">
+        <div class="card mb-3">
             <div class="card-header"><h5 class="card-title mb-0">Overview</h5></div>
             <div class="card-body">
-                <p class="text-muted">
-                    This plugin communicates live with your Zabbix monitoring server using standard JSON-RPC requests.
+                <p class="text-muted small mb-3">
+                    Communicating live with your Zabbix 7.0+ server via JSON-RPC.
                 </p>
                 <ul class="list-group list-group-flush">
-                    <li class="list-group-item d-flex justify-content-between align-items-center">
-                        Active Hosts
-                        <span class="badge bg-info rounded-pill">{{ host_count }}</span>
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                        Hosts Monitored
+                        <span class="badge bg-primary rounded-pill">{{ host_count }}</span>
                     </li>
-                    <li class="list-group-item d-flex justify-content-between align-items-center">
-                        Templates
-                        <span class="badge bg-info rounded-pill">{{ template_count }}</span>
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                        Templates Configured
+                        <span class="badge bg-primary rounded-pill">{{ template_count }}</span>
                     </li>
                 </ul>
             </div>
