@@ -16,21 +16,26 @@ def process_table_data(request, items, headers, title, default_per_page=50, has_
 
     if has_status:
         for row in items:
-            if any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row):
+            row_str_list = [str(cell).lower() for cell in row if not isinstance(cell, dict)]
+            if any(s in row_str_list for s in ['monitored', 'online', 'active']):
                 synced_devices += 1
-        devices_to_sync = total_devices - synced_devices
+            elif any(s in row_str_list for s in ['disabled', 'unmonitored', 'offline']):
+                devices_to_sync += 1
+            else:
+                # Default to active if unknown
+                synced_devices += 1
 
         status_filter = request.GET.get('status', '').strip().lower()
         if status_filter == 'synced' or status_filter == 'active':
-            items = [row for row in items if any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row)]
-        elif status_filter == 'pending' or status_filter == 'inactive':
-            items = [row for row in items if not any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row)]
+            items = [row for row in items if any(str(cell).lower() in ['monitored', 'online', 'active'] for cell in row if not isinstance(cell, dict))]
+        elif status_filter == 'pending' or status_filter == 'inactive' or status_filter == 'disabled':
+            items = [row for row in items if any(str(cell).lower() in ['disabled', 'unmonitored', 'offline'] for cell in row if not isinstance(cell, dict))]
     else:
         status_filter = ""
 
     q = request.GET.get('q', '').strip()
     if q:
-        items = [row for row in items if any(q.lower() in str(cell).lower() for cell in row)]
+        items = [row for row in items if any(q.lower() in str(cell).lower() for cell in row if not isinstance(cell, dict))]
 
     filtered_count = len(items)
 
@@ -296,7 +301,6 @@ class ZabbixHostGroupsView(View):
         items = []
         processed_zabbix_lower = set()
 
-        # 1. Process NetBox Device Roles first (Plain text, no color!)
         for role in netbox_roles:
             r_name = role.name
             r_lower = r_name.strip().lower()
@@ -318,11 +322,10 @@ class ZabbixHostGroupsView(View):
             items.append([
                 gid,
                 zg_name_disp,
-                r_name,  # Plain text, no color badge!
+                r_name,
                 status_cell
             ])
 
-        # 2. Add remaining Zabbix Host Groups that are not NetBox Device Roles
         if isinstance(zabbix_groups, list):
             for g in zabbix_groups:
                 g_name = g.get("name", "")
@@ -374,7 +377,7 @@ class ZabbixHostsView(View):
                 'title': 'Hosts', 'error': hosts["error"]
             })
 
-        # Pre-build Proxy ID -> Name map for fast, error-free lookup
+        # Pre-build Proxy ID -> Name map
         proxy_map = {}
         try:
             proxies = api.get_proxies()
@@ -401,14 +404,17 @@ class ZabbixHostsView(View):
         except Exception as e:
             logger.error(f"Error querying NetBox devices: {e}")
 
-        headers = ["Host Name", "Primary IP", "NetBox Device Role", "Zabbix Hostgroups", "Protocol", "Monitored By", "Role Sync"]
+        headers = ["Host Name", "Primary IP", "NetBox Device Role", "Zabbix Hostgroups", "Protocol", "Monitored By", "Status", "Role Sync"]
         items = []
         if isinstance(hosts, list):
             for h in hosts:
                 h_name = h.get("host", "-")
                 v_name = h.get("name", "") or h_name
                 host_id = h.get("hostid")
-                status_str = "Monitored" if str(h.get("status")) == "0" else "Unmonitored"
+                
+                # Zabbix status: 0 = Monitored/Active, 1 = Disabled/Unmonitored
+                status_val = str(h.get("status", "0"))
+                status_str = "Monitored" if status_val == "0" else "Disabled"
 
                 # 1. Interface & Protocol
                 interfaces = h.get("interfaces", [])
@@ -454,7 +460,7 @@ class ZabbixHostsView(View):
                     nb_role_name = nb_device.role.name
                     role_synced = any(nb_role_name.lower() == zg.lower() for zg in zabbix_group_names)
 
-                # Format Role Sync action / badge cell (Plain text, no color!)
+                # Format Role Sync action
                 if not nb_device or nb_role_name == "-":
                     sync_cell = {"type": "none", "text": "No Role"}
                 elif role_synced:
@@ -470,10 +476,11 @@ class ZabbixHostsView(View):
                 items.append([
                     h_name,
                     ip_str,
-                    nb_role_name,  # Plain text, no color!
+                    nb_role_name,
                     zabbix_group_disp,
                     protocol_str,
                     monitored_by_str,
+                    status_str,  # Added Status column!
                     sync_cell
                 ])
                 

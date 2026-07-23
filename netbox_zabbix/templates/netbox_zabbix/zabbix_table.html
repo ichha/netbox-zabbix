@@ -45,15 +45,15 @@
             </a>
         </div>
         <div class="col-md-4">
-            <a href="?status=pending{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'pending' %}border border-danger border-2{% else %}border-0{% endif %}" title="Click to view unmonitored items">
+            <a href="?status=disabled{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'disabled' or status_filter == 'pending' %}border border-danger border-2{% else %}border-0{% endif %}" title="Click to view disabled items">
                 <div class="card-body d-flex align-items-center">
                     <div class="avatar bg-danger text-white p-3 rounded-circle me-3">
-                        <i class="mdi mdi-sync-alert fs-2"></i>
+                        <i class="mdi mdi-alert-circle fs-2"></i>
                     </div>
                     <div>
-                        <div class="fs-6 text-muted text-uppercase fw-semibold">Unmonitored / Offline</div>
+                        <div class="fs-6 text-muted text-uppercase fw-semibold">Disabled / Offline</div>
                         <div class="fs-2 fw-bold text-danger">{{ devices_to_sync }}</div>
-                        <div class="fs-7 text-muted">Disabled or offline (Click to filter)</div>
+                        <div class="fs-7 text-muted">Disabled or offline in Zabbix</div>
                     </div>
                 </div>
             </a>
@@ -115,10 +115,10 @@
             <div class="col-auto ms-auto">
                 <span class="badge bg-light text-dark border">
                     <i class="mdi mdi-filter-check me-1"></i>
-                    {% if status_filter == 'synced' %}
+                    {% if status_filter == 'synced' or status_filter == 'active' %}
                         Showing Active / Monitored {{ title }}
-                    {% elif status_filter == 'pending' %}
-                        Showing Unmonitored / Offline {{ title }}
+                    {% elif status_filter == 'disabled' or status_filter == 'pending' %}
+                        Showing Disabled / Offline {{ title }}
                     {% else %}
                         Showing All Zabbix {{ title }}
                     {% endif %}
@@ -181,7 +181,7 @@
                                         <span class="badge bg-success text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
                                             <i class="mdi mdi-check-circle me-1"></i> {{ cell }}
                                         </span>
-                                    {% elif cell == "Unmonitored" or cell == "Offline" or cell == "Passive" %}
+                                    {% elif cell == "Disabled" or cell == "Unmonitored" or cell == "Offline" or cell == "Passive" %}
                                         <span class="badge bg-danger text-white fw-bold" style="font-size: 0.82rem; padding: 6px 10px;">
                                             <i class="mdi mdi-alert-circle me-1"></i> {{ cell }}
                                         </span>
