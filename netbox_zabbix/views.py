@@ -562,14 +562,67 @@ class ZabbixHostsView(View):
                                 if zh not in zabbix_ip_map[zip_addr]:
                                     zabbix_ip_map[zip_addr].append(zh)
 
-        # 3. Build 2-Row Comparison Block per Device
-        all_blocks = []
-        matched_count = 0
-        mismatch_count = 0
+        zabbix_names_set = set(zabbix_name_map.keys())
+        zabbix_ips_set = set(zabbix_ip_map.keys())
 
         total_devices = qs.count()
 
-        for dev in qs.iterator():
+        # Fast match check helper
+        def is_dev_matched(dev):
+            dev_n = (dev.name or "").strip().lower()
+            dev_ip = ""
+            if dev.primary_ip4:
+                dev_ip = str(dev.primary_ip4.address).split('/')[0]
+            elif dev.primary_ip6:
+                dev_ip = str(dev.primary_ip6.address).split('/')[0]
+            return (dev_n in zabbix_names_set) or (dev_ip and dev_ip in zabbix_ips_set)
+
+        # 3. Filter by status if card clicked
+        status_filter = request.GET.get('status', '').strip().lower()
+
+        all_devices_list = list(qs.iterator())
+
+        if status_filter in ['synced', 'active', 'matched']:
+            filtered_devs = [dev for dev in all_devices_list if is_dev_matched(dev)]
+            matched_count = len(filtered_devs)
+            mismatch_count = total_devices - matched_count
+        elif status_filter in ['pending', 'inactive', 'mismatch', 'disabled']:
+            filtered_devs = [dev for dev in all_devices_list if not is_dev_matched(dev)]
+            mismatch_count = len(filtered_devs)
+            matched_count = total_devices - mismatch_count
+        else:
+            filtered_devs = all_devices_list
+            matched_count = sum(1 for dev in all_devices_list if is_dev_matched(dev))
+            mismatch_count = total_devices - matched_count
+
+        filtered_count = len(filtered_devs)
+
+        # 4. Pagination (slice to active page ONLY)
+        per_page_param = request.GET.get('per_page', '50')
+        page_param = request.GET.get('page', '1')
+
+        try:
+            per_page = int(per_page_param) if per_page_param.lower() != 'all' else filtered_count
+            if per_page <= 0:
+                per_page = 50
+        except ValueError:
+            per_page = 50
+
+        try:
+            page_num = int(page_param)
+            if page_num <= 0:
+                page_num = 1
+        except ValueError:
+            page_num = 1
+
+        start_idx = (page_num - 1) * per_page
+        end_idx = start_idx + per_page
+        page_slice = filtered_devs[start_idx:end_idx]
+
+        # 5. Build 2-Row Comparison Block ONLY for the active page slice (50 items)
+        page_blocks = []
+
+        for dev in page_slice:
             nb_name = dev.name or f"Device-{dev.pk}"
             nb_ip = "—"
             if dev.primary_ip4:
@@ -646,7 +699,6 @@ class ZabbixHostsView(View):
             }
 
             if matching_zabbix_host:
-                matched_count += 1
                 zh_target = matching_zabbix_host
                 item["zabbix_exists"] = True
                 zh_hid = str(zh_target.get("hostid", ""))
@@ -792,36 +844,18 @@ class ZabbixHostsView(View):
                     item["zabbix_monitored_by"] = "Server"
 
                 item["role_synced"] = any(nb_role.lower() == zg.lower() for zg in item["zabbix_hostgroups"]) if nb_role != "—" else False
-            else:
-                mismatch_count += 1
 
-            all_blocks.append(item)
+            page_blocks.append(item)
 
-        # 4. Filter rows if card clicked
-        status_filter = request.GET.get('status', '').strip().lower()
-        if status_filter in ['synced', 'active', 'matched']:
-            filtered_blocks = [item for item in all_blocks if item["match_status"] == 'matched']
-        elif status_filter in ['pending', 'inactive', 'mismatch', 'disabled']:
-            filtered_blocks = [item for item in all_blocks if item["match_status"] == 'mismatch']
-        else:
-            filtered_blocks = list(all_blocks)
-
-        # 5. Pagination
-        per_page_param = request.GET.get('per_page', '50')
-        page_param = request.GET.get('page', '1')
-
+        # 6. Pagination object construction
+        paginator = Paginator(filtered_devs, per_page if per_page > 0 else 50)
         try:
-            per_page = int(per_page_param) if per_page_param.lower() != 'all' else len(filtered_blocks)
-            if per_page <= 0:
-                per_page = 50
-        except ValueError:
-            per_page = 50
-
-        paginator = Paginator(filtered_blocks, per_page if per_page > 0 else 50)
-        try:
-            page_obj = paginator.page(page_param)
+            page_obj = paginator.page(page_num)
         except Exception:
             page_obj = paginator.page(1)
+
+        # Override page_obj.object_list with the 50 processed detail blocks
+        page_obj.object_list = page_blocks
 
         headers = [
             "Source",
