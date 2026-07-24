@@ -96,10 +96,10 @@ class ZabbixAPI:
         })
 
     def get_hosts(self):
-        # Proven 100% working host.get query for Zabbix 7.0 LTS
+        # 1. Primary Zabbix 7.0+ call with detailed interfaces, host groups, and parent templates
         res = self.call("host.get", {
             "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-            "selectInterfaces": ["ip", "port", "type", "main"],
+            "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
             "selectHostGroups": ["groupid", "name"],
             "selectParentTemplates": ["templateid", "name"]
         })
@@ -107,11 +107,18 @@ class ZabbixAPI:
             # Fallback 1: Without selectParentTemplates
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-                "selectInterfaces": ["ip", "port", "type", "main"],
+                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
                 "selectHostGroups": ["groupid", "name"]
             })
         if isinstance(res, dict) and "error" in res:
             # Fallback 2: With selectGroups for older Zabbix releases
+            res = self.call("host.get", {
+                "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
+                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
+                "selectGroups": ["groupid", "name"]
+            })
+        if isinstance(res, dict) and "error" in res:
+            # Fallback 3: Standard interface outputs
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
                 "selectInterfaces": ["ip", "port", "type", "main"],
@@ -130,7 +137,7 @@ class ZabbixAPI:
                     if isinstance(t, dict):
                         tags_set.add((t.get("tag", ""), t.get("value", "")))
         if isinstance(templates, list):
-            for tm in templates:
+            for tm from templates:
                 for t in tm.get("tags", []):
                     if isinstance(t, dict):
                         tags_set.add((t.get("tag", ""), t.get("value", "")))

@@ -598,10 +598,15 @@ class ZabbixHostsView(View):
                 "zabbix_monitored_by": "—",
                 "snmp_version": "—",
                 "snmp_community": "—",
+                "snmp_max_repetitions": "—",
+                "snmp_bulk": "—",
+                "snmpv3_context": "—",
                 "snmpv3_secname": "—",
                 "snmpv3_seclevel": "—",
                 "snmpv3_authproto": "—",
+                "snmpv3_authpass": "—",
                 "snmpv3_privproto": "—",
+                "snmpv3_privpass": "—",
             }
 
             if matching_zabbix_host:
@@ -625,7 +630,7 @@ class ZabbixHostsView(View):
                 z_groups = zh_target.get("hostgroups", []) or zh_target.get("groups", [])
                 item["zabbix_hostgroups"] = [g.get("name") for g in z_groups if isinstance(g, dict) and g.get("name")]
 
-                # Interfaces & SNMP details
+                # Interfaces & Complete SNMP details
                 interfaces = zh_target.get("interfaces", [])
                 if isinstance(interfaces, list) and len(interfaces) > 0:
                     main_iface = interfaces[0]
@@ -642,8 +647,8 @@ class ZabbixHostsView(View):
                     item["zabbix_protocol"] = "SNMP" if t_val == "2" else "IPMI" if t_val == "3" else "JMX" if t_val == "4" else "Agent"
 
                     details = main_iface.get("details", {})
-                    if isinstance(details, dict):
-                        ver = str(details.get("version", ""))
+                    if isinstance(details, dict) and details:
+                        ver = str(details.get("version", "2"))
                         if ver == "1":
                             item["snmp_version"] = "SNMPv1"
                             item["snmp_community"] = details.get("community", "{$SNMP_COMMUNITY}")
@@ -652,16 +657,29 @@ class ZabbixHostsView(View):
                             item["snmp_community"] = details.get("community", "{$SNMP_COMMUNITY}")
                         elif ver == "3":
                             item["snmp_version"] = "SNMPv3"
-                            item["snmpv3_secname"] = details.get("securityname", "—")
+                            item["snmpv3_context"] = details.get("contextname", "") or "—"
+                            item["snmpv3_secname"] = details.get("securityname", "") or "—"
                             
                             s_lvl = str(details.get("securitylevel", "0"))
                             item["snmpv3_seclevel"] = "authPriv" if s_lvl == "2" else "authNoPriv" if s_lvl == "1" else "noAuthNoPriv"
 
                             a_pr = str(details.get("authprotocol", "0"))
-                            item["snmpv3_authproto"] = "SHA" if a_pr in ["1", "3", "SHA"] else "MD5" if a_pr in ["0", "MD5"] else str(a_pr)
+                            auth_map = {"0": "MD5", "1": "SHA1", "2": "SHA224", "3": "SHA256", "4": "SHA384", "5": "SHA512"}
+                            item["snmpv3_authproto"] = auth_map.get(a_pr, a_pr)
+                            item["snmpv3_authpass"] = "••••••••" if details.get("authpassphrase") else "—"
 
                             p_pr = str(details.get("privprotocol", "0"))
-                            item["snmpv3_privproto"] = "AES" if p_pr in ["1", "AES"] else "DES" if p_pr in ["0", "DES"] else str(p_pr)
+                            priv_map = {"0": "DES", "1": "AES128", "2": "AES192", "3": "AES256", "4": "AES192C3GPP", "5": "AES256C3GPP"}
+                            item["snmpv3_privproto"] = priv_map.get(p_pr, p_pr)
+                            item["snmpv3_privpass"] = "••••••••" if details.get("privpassphrase") else "—"
+
+                        max_rep = details.get("max_repetitions")
+                        if max_rep is not None and str(max_rep) != "":
+                            item["snmp_max_repetitions"] = str(max_rep)
+
+                        bulk_val = details.get("bulk")
+                        if bulk_val is not None:
+                            item["snmp_bulk"] = "Yes" if str(bulk_val) == "1" else "No"
 
                 proxy_id = str(zh_target.get("proxyid") or "0")
                 proxy_group_id = str(zh_target.get("proxy_groupid") or "0")

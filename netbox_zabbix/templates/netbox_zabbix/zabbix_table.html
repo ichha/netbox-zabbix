@@ -266,22 +266,92 @@
                                 {% endif %}
                             </td>
 
-                            <!-- SEPARATE COLUMN 2: ZABBIX SETTINGS & SNMP -->
+                            <!-- SEPARATE COLUMN 2: ZABBIX SETTINGS & COMPLETE SNMP -->
                             <td class="align-middle py-2">
                                 {% if item.zabbix_exists %}
                                     <div class="d-flex flex-wrap gap-1 align-items-center">
-                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold" style="font-size: 0.75rem;">{{ item.zabbix_protocol }}</span>
+                                        <!-- Protocol -->
+                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold" style="font-size: 0.75rem;">
+                                            {{ item.zabbix_protocol }}
+                                        </span>
+
+                                        <!-- SNMP Version -->
                                         {% if item.snmp_version != "—" %}
-                                            <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle fw-semibold" style="font-size: 0.75rem;">{{ item.snmp_version }}</span>
+                                            <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle fw-semibold" style="font-size: 0.75rem;">
+                                                {{ item.snmp_version }}
+                                            </span>
                                         {% endif %}
+
+                                        <!-- SNMP Community (v1 / v2c) -->
                                         {% if item.snmp_community != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">Comm: {{ item.snmp_community }}</span>
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;" title="SNMP Community">
+                                                Comm: {{ item.snmp_community }}
+                                            </span>
                                         {% endif %}
+
+                                        <!-- SNMPv3 Security Name -->
                                         {% if item.snmpv3_secname != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">SecName: {{ item.snmpv3_secname }}</span>
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">{{ item.snmpv3_seclevel }}</span>
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;" title="Security Name">
+                                                SecName: {{ item.snmpv3_secname }}
+                                            </span>
                                         {% endif %}
-                                        <span class="text-muted small ms-1"><i class="mdi mdi-server-network me-1"></i>{{ item.zabbix_monitored_by }}</span>
+
+                                        <!-- SNMPv3 Security Level -->
+                                        {% if item.snmpv3_seclevel != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
+                                                {{ item.snmpv3_seclevel }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- SNMPv3 Auth Protocol & Passphrase -->
+                                        {% if item.snmpv3_authproto != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
+                                                Auth: {{ item.snmpv3_authproto }}
+                                            </span>
+                                        {% endif %}
+                                        {% if item.snmpv3_authpass != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
+                                                AuthPass: {{ item.snmpv3_authpass }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- SNMPv3 Priv Protocol & Passphrase -->
+                                        {% if item.snmpv3_privproto != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
+                                                Priv: {{ item.snmpv3_privproto }}
+                                            </span>
+                                        {% endif %}
+                                        {% if item.snmpv3_privpass != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
+                                                PrivPass: {{ item.snmpv3_privpass }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- SNMPv3 Context Name -->
+                                        {% if item.snmpv3_context != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
+                                                Context: {{ item.snmpv3_context }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- Max Repetitions -->
+                                        {% if item.snmp_max_repetitions != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;" title="Max Repetitions">
+                                                MaxReps: {{ item.snmp_max_repetitions }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- Bulk Requests -->
+                                        {% if item.snmp_bulk != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;" title="Use Combined Requests">
+                                                Bulk: {{ item.snmp_bulk }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- Monitored By Proxy / Server -->
+                                        <span class="text-muted small ms-1">
+                                            <i class="mdi mdi-server-network me-1"></i>{{ item.zabbix_monitored_by }}
+                                        </span>
                                     </div>
                                 {% else %}
                                     <span class="text-muted small">&mdash;</span>
