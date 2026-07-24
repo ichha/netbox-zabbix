@@ -232,6 +232,13 @@
                                             </span>
                                         {% endif %}
 
+                                        <!-- SNMPv3 Context Name -->
+                                        {% if item.snmpv3_context != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;" title="Context Name">
+                                                Context: {{ item.snmpv3_context }}
+                                            </span>
+                                        {% endif %}
+
                                         <!-- Monitored By Proxy / Server -->
                                         <div class="text-muted small w-100 mt-1">
                                             <i class="mdi mdi-server-network me-1"></i>{{ item.zabbix_monitored_by }}

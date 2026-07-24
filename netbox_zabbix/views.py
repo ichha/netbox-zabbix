@@ -732,7 +732,7 @@ class ZabbixHostsView(View):
                         elif t_val == "2":
                             item["snmp_version"] = "SNMPv2c"
 
-                        # Extract Community string (directly from interface details or main_iface)
+                        # Extract Community string (v1/v2c)
                         raw_comm = None
                         if isinstance(details, dict):
                             raw_comm = details.get("community")
@@ -748,7 +748,7 @@ class ZabbixHostsView(View):
                         elif "{$SNMP_COMMUNITY}" in host_macro_map:
                             item["snmp_community"] = host_macro_map["{$SNMP_COMMUNITY}"]
 
-                        # SNMPv3 fields
+                        # Comprehensive SNMPv3 fields extraction
                         if ver == "3":
                             item["snmpv3_context"] = details.get("contextname") or main_iface.get("contextname") or "—"
                             item["snmpv3_secname"] = details.get("securityname") or main_iface.get("securityname") or "—"
@@ -756,16 +756,16 @@ class ZabbixHostsView(View):
                             s_lvl = str(details.get("securitylevel") or main_iface.get("securitylevel") or "0")
                             item["snmpv3_seclevel"] = "authPriv" if s_lvl == "2" else "authNoPriv" if s_lvl == "1" else "noAuthNoPriv"
 
-                            a_pr = str(details.get("authprotocol") or main_iface.get("authprotocol") or "0")
+                            a_pr = str(details.get("authprotocol") or main_iface.get("authprotocol") or "")
                             auth_map = {"0": "MD5", "1": "SHA1", "2": "SHA224", "3": "SHA256", "4": "SHA384", "5": "SHA512"}
-                            item["snmpv3_authproto"] = auth_map.get(a_pr, a_pr)
+                            item["snmpv3_authproto"] = auth_map.get(a_pr, a_pr) if a_pr else "—"
 
                             apass = details.get("authpassphrase") or main_iface.get("authpassphrase")
                             item["snmpv3_authpass"] = "••••••••" if apass else "—"
 
-                            p_pr = str(details.get("privprotocol") or main_iface.get("privprotocol") or "0")
+                            p_pr = str(details.get("privprotocol") or main_iface.get("privprotocol") or "")
                             priv_map = {"0": "DES", "1": "AES128", "2": "AES192", "3": "AES256", "4": "AES192C3GPP", "5": "AES256C3GPP"}
-                            item["snmpv3_privproto"] = priv_map.get(p_pr, p_pr)
+                            item["snmpv3_privproto"] = priv_map.get(p_pr, p_pr) if p_pr else "—"
 
                             ppass = details.get("privpassphrase") or main_iface.get("privpassphrase")
                             item["snmpv3_privpass"] = "••••••••" if ppass else "—"
