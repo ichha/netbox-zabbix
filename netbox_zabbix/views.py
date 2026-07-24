@@ -634,22 +634,28 @@ class ZabbixHostsView(View):
                 z_st = str(zh_target.get("status", "0"))
                 item["zabbix_status"] = "Monitored" if z_st == "0" else "Disabled"
 
-                # Attached templates (checking parentTemplates and templates)
-                z_templates = zh_target.get("parentTemplates", []) or zh_target.get("templates", [])
+                # Comprehensive attached template extraction
+                all_t_objs = []
+                for k in ["parentTemplates", "templates", "inheritedTemplates"]:
+                    t_list = zh_target.get(k)
+                    if isinstance(t_list, list):
+                        all_t_objs.extend(t_list)
+
                 template_names = []
-                if isinstance(z_templates, list):
-                    for t in z_templates:
-                        if isinstance(t, dict):
-                            t_n = t.get("name") or t.get("host")
-                            if t_n:
-                                template_names.append(t_n)
+                seen_t = set()
+                for t in all_t_objs:
+                    if isinstance(t, dict):
+                        t_n = t.get("name") or t.get("host")
+                        if t_n and t_n not in seen_t:
+                            seen_t.add(t_n)
+                            template_names.append(t_n)
                 item["zabbix_templates"] = template_names
 
                 # Host groups
                 z_groups = zh_target.get("hostgroups", []) or zh_target.get("groups", [])
                 item["zabbix_hostgroups"] = [g.get("name") for g in z_groups if isinstance(g, dict) and g.get("name")]
 
-                # Build merged macros for this host (Host-level macros override global macros)
+                # Build merged macros for this host
                 host_macro_map = dict(global_macros)
                 host_macros_list = zh_target.get("macros", [])
                 if isinstance(host_macros_list, list):
@@ -780,8 +786,7 @@ class ZabbixHostsView(View):
             "Primary IP",
             "Status",
             "Role / Host Groups",
-            "Attached Templates",
-            "Zabbix Settings & SNMP",
+            "Zabbix Settings & Attached Templates",
             "Match Status & Action"
         ]
 

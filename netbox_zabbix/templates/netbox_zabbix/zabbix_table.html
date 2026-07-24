@@ -146,8 +146,7 @@
                         <th>Primary IP</th>
                         <th>Status</th>
                         <th>Role / Host Groups</th>
-                        <th>Attached Templates</th>
-                        <th>Zabbix Settings & SNMP</th>
+                        <th>Zabbix Settings & Attached Templates</th>
                         <th class="text-end" style="width: 150px;">Match Status</th>
                     </tr>
                 </thead>
@@ -170,7 +169,7 @@
                                     {{ item.netbox_role }}
                                 </span>
                             </td>
-                            <td class="align-middle text-muted small" colspan="2">
+                            <td class="align-middle text-muted small">
                                 Mapped Hostgroup: <strong class="text-dark">{{ item.netbox_mapped_hostgroup }}</strong>
                             </td>
                             <td rowspan="2" class="align-middle text-end border-start bg-body-tertiary">
@@ -240,36 +239,25 @@
                                     <span class="text-muted small">&mdash;</span>
                                 {% endif %}
                             </td>
+
+                            <!-- ROLE / HOST GROUPS: Clean empty cell for Zabbix Row -->
                             <td class="align-middle">
-                                {% if item.zabbix_exists and item.zabbix_hostgroups %}
-                                    <div class="d-flex flex-wrap gap-1">
-                                        {% for hg in item.zabbix_hostgroups %}
-                                            <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle fw-semibold" style="font-size: 0.75rem;">{{ hg }}</span>
-                                        {% endfor %}
-                                    </div>
-                                {% else %}
-                                    <span class="text-muted small">&mdash;</span>
-                                {% endif %}
-                            </td>
-                            <!-- SEPARATE COLUMN 1: ATTACHED TEMPLATES -->
-                            <td class="align-middle py-2">
-                                {% if item.zabbix_exists and item.zabbix_templates %}
-                                    <div class="d-flex flex-column gap-1 align-items-start">
-                                        {% for tmpl in item.zabbix_templates %}
-                                            <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm" style="font-size: 0.78rem; padding: 3px 8px; border-radius: 4px;">
-                                                <i class="mdi mdi-file-document-outline text-primary me-1"></i> {{ tmpl }}
-                                            </span>
-                                        {% endfor %}
-                                    </div>
-                                {% else %}
-                                    <span class="text-muted small">&mdash; None &mdash;</span>
-                                {% endif %}
+                                <span class="text-muted small">&mdash;</span>
                             </td>
 
-                            <!-- SEPARATE COLUMN 2: ZABBIX SETTINGS & COMPLETE SNMP -->
+                            <!-- COMBINED WHOLE BOX FOR ZABBIX SETTINGS & ATTACHED TEMPLATES -->
                             <td class="align-middle py-2">
                                 {% if item.zabbix_exists %}
                                     <div class="d-flex flex-wrap gap-1 align-items-center">
+                                        <!-- Attached Templates (if present) -->
+                                        {% if item.zabbix_templates %}
+                                            {% for tmpl in item.zabbix_templates %}
+                                                <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm me-1" style="font-size: 0.78rem; padding: 3px 8px; border-radius: 4px;">
+                                                    <i class="mdi mdi-file-document-outline text-primary me-1"></i> {{ tmpl }}
+                                                </span>
+                                            {% endfor %}
+                                        {% endif %}
+
                                         <!-- Protocol -->
                                         <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold" style="font-size: 0.75rem;">
                                             {{ item.zabbix_protocol }}
@@ -303,27 +291,17 @@
                                             </span>
                                         {% endif %}
 
-                                        <!-- SNMPv3 Auth Protocol & Passphrase -->
+                                        <!-- SNMPv3 Auth Protocol -->
                                         {% if item.snmpv3_authproto != "—" %}
                                             <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
                                                 Auth: {{ item.snmpv3_authproto }}
                                             </span>
                                         {% endif %}
-                                        {% if item.snmpv3_authpass != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
-                                                AuthPass: {{ item.snmpv3_authpass }}
-                                            </span>
-                                        {% endif %}
 
-                                        <!-- SNMPv3 Priv Protocol & Passphrase -->
+                                        <!-- SNMPv3 Priv Protocol -->
                                         {% if item.snmpv3_privproto != "—" %}
                                             <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
                                                 Priv: {{ item.snmpv3_privproto }}
-                                            </span>
-                                        {% endif %}
-                                        {% if item.snmpv3_privpass != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
-                                                PrivPass: {{ item.snmpv3_privpass }}
                                             </span>
                                         {% endif %}
 
