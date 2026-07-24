@@ -146,7 +146,8 @@
                         <th>Primary IP</th>
                         <th>Status</th>
                         <th>Role / Host Groups</th>
-                        <th>Zabbix Settings & Attached Templates</th>
+                        <th>Attached Templates</th>
+                        <th>Zabbix Settings & SNMP</th>
                         <th class="text-end" style="width: 150px;">Match Status</th>
                     </tr>
                 </thead>
@@ -171,6 +172,9 @@
                             </td>
                             <td class="align-middle text-muted small">
                                 Mapped Hostgroup: <strong class="text-dark">{{ item.netbox_mapped_hostgroup }}</strong>
+                            </td>
+                            <td class="align-middle">
+                                <span class="text-muted small">&mdash;</span>
                             </td>
                             <td rowspan="2" class="align-middle text-end border-start bg-body-tertiary">
                                 <div class="d-flex flex-column align-items-end gap-2 p-1">
@@ -240,24 +244,40 @@
                                 {% endif %}
                             </td>
 
-                            <!-- ROLE / HOST GROUPS: Clean empty cell for Zabbix Row -->
+                            <!-- ROLE / HOST GROUPS: Show Hostgroup in Role/Hostgroup Column for Zabbix -->
                             <td class="align-middle">
-                                <span class="text-muted small">&mdash;</span>
+                                {% if item.zabbix_exists and item.zabbix_hostgroups %}
+                                    <div class="d-flex flex-wrap gap-1">
+                                        {% for hg in item.zabbix_hostgroups %}
+                                            <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle fw-semibold" style="font-size: 0.75rem;">{{ hg }}</span>
+                                        {% endfor %}
+                                    </div>
+                                {% elif item.zabbix_exists and item.netbox_mapped_hostgroup != "—" %}
+                                    <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle fw-semibold" style="font-size: 0.75rem;">{{ item.netbox_mapped_hostgroup }}</span>
+                                {% else %}
+                                    <span class="text-muted small">&mdash;</span>
+                                {% endif %}
                             </td>
 
-                            <!-- COMBINED WHOLE BOX FOR ZABBIX SETTINGS & ATTACHED TEMPLATES -->
+                            <!-- ATTACHED TEMPLATES: Dedicated Template Column -->
+                            <td class="align-middle py-2">
+                                {% if item.zabbix_exists and item.zabbix_templates %}
+                                    <div class="d-flex flex-column gap-1 align-items-start">
+                                        {% for tmpl in item.zabbix_templates %}
+                                            <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm" style="font-size: 0.78rem; padding: 3px 8px; border-radius: 4px;">
+                                                <i class="mdi mdi-file-document-outline text-primary me-1"></i> {{ tmpl }}
+                                            </span>
+                                        {% endfor %}
+                                    </div>
+                                {% else %}
+                                    <span class="text-muted small">&mdash; None &mdash;</span>
+                                {% endif %}
+                            </td>
+
+                            <!-- ZABBIX SETTINGS & SNMP: Dedicated Zabbix Setting Column -->
                             <td class="align-middle py-2">
                                 {% if item.zabbix_exists %}
                                     <div class="d-flex flex-wrap gap-1 align-items-center">
-                                        <!-- Attached Templates (if present) -->
-                                        {% if item.zabbix_templates %}
-                                            {% for tmpl in item.zabbix_templates %}
-                                                <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm me-1" style="font-size: 0.78rem; padding: 3px 8px; border-radius: 4px;">
-                                                    <i class="mdi mdi-file-document-outline text-primary me-1"></i> {{ tmpl }}
-                                                </span>
-                                            {% endfor %}
-                                        {% endif %}
-
                                         <!-- Protocol -->
                                         <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold" style="font-size: 0.75rem;">
                                             {{ item.zabbix_protocol }}
@@ -302,27 +322,6 @@
                                         {% if item.snmpv3_privproto != "—" %}
                                             <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
                                                 Priv: {{ item.snmpv3_privproto }}
-                                            </span>
-                                        {% endif %}
-
-                                        <!-- SNMPv3 Context Name -->
-                                        {% if item.snmpv3_context != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
-                                                Context: {{ item.snmpv3_context }}
-                                            </span>
-                                        {% endif %}
-
-                                        <!-- Max Repetitions -->
-                                        {% if item.snmp_max_repetitions != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;" title="Max Repetitions">
-                                                MaxReps: {{ item.snmp_max_repetitions }}
-                                            </span>
-                                        {% endif %}
-
-                                        <!-- Bulk Requests -->
-                                        {% if item.snmp_bulk != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;" title="Use Combined Requests">
-                                                Bulk: {{ item.snmp_bulk }}
                                             </span>
                                         {% endif %}
 

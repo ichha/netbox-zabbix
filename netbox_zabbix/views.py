@@ -819,7 +819,8 @@ class ZabbixHostsView(View):
             "Primary IP",
             "Status",
             "Role / Host Groups",
-            "Zabbix Settings & Attached Templates",
+            "Attached Templates",
+            "Zabbix Settings & SNMP",
             "Match Status & Action"
         ]
 
@@ -870,7 +871,7 @@ class ZabbixPushDeviceView(View):
         # 1. Host group ID
         hostgroup_id = None
         if role_name:
-            groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
+            groups = api.call("hostgroup.create", {"filter": {"name": role_name}})
             if isinstance(groups, list) and len(groups) > 0:
                 hostgroup_id = groups[0].get("groupid")
             else:
