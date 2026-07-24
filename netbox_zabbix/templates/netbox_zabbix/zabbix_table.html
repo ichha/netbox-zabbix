@@ -170,12 +170,79 @@
                                     {{ item.netbox_role }}
                                 </span>
                             </td>
-                            <td class="align-middle text-muted small">
-                                Mapped Hostgroup: <strong class="text-dark">{{ item.netbox_mapped_hostgroup }}</strong>
-                            </td>
                             <td class="align-middle">
                                 <span class="text-muted small">&mdash;</span>
                             </td>
+
+                            <!-- ZABBIX SETTINGS & SNMP: COMBINED ACROSS 2 ROWS -->
+                            <td rowspan="2" class="align-middle py-2 border-start bg-body-tertiary" style="min-width: 220px;">
+                                {% if item.zabbix_exists %}
+                                    <div class="d-flex flex-wrap gap-1 align-items-center">
+                                        <!-- Protocol -->
+                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold" style="font-size: 0.75rem;">
+                                            {{ item.zabbix_protocol }}
+                                        </span>
+
+                                        <!-- SNMP Version -->
+                                        {% if item.snmp_version != "—" %}
+                                            <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle fw-semibold" style="font-size: 0.75rem;">
+                                                {{ item.snmp_version }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- Port Badge -->
+                                        {% if item.zabbix_port %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
+                                                Port: {{ item.zabbix_port }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- SNMP Community (v1 / v2c) -->
+                                        {% if item.snmp_community != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;" title="SNMP Community">
+                                                Comm: {{ item.snmp_community }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- SNMPv3 Security Name -->
+                                        {% if item.snmpv3_secname != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;" title="Security Name">
+                                                SecName: {{ item.snmpv3_secname }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- SNMPv3 Security Level -->
+                                        {% if item.snmpv3_seclevel != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
+                                                {{ item.snmpv3_seclevel }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- SNMPv3 Auth Protocol -->
+                                        {% if item.snmpv3_authproto != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
+                                                Auth: {{ item.snmpv3_authproto }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- SNMPv3 Priv Protocol -->
+                                        {% if item.snmpv3_privproto != "—" %}
+                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
+                                                Priv: {{ item.snmpv3_privproto }}
+                                            </span>
+                                        {% endif %}
+
+                                        <!-- Monitored By Proxy / Server -->
+                                        <div class="text-muted small w-100 mt-1">
+                                            <i class="mdi mdi-server-network me-1"></i>{{ item.zabbix_monitored_by }}
+                                        </div>
+                                    </div>
+                                {% else %}
+                                    <span class="text-muted small">&mdash;</span>
+                                {% endif %}
+                            </td>
+
+                            <!-- MATCH STATUS & ACTION: COMBINED ACROSS 2 ROWS -->
                             <td rowspan="2" class="align-middle text-end border-start bg-body-tertiary">
                                 <div class="d-flex flex-column align-items-end gap-2 p-1">
                                     {% if item.match_status == "matched" %}
@@ -212,7 +279,7 @@
                             </td>
                         </tr>
 
-                        <!-- ROW 2: ZABBIX DATA (Light Line Divider between NetBox and Zabbix) -->
+                        <!-- ROW 2: ZABBIX DATA -->
                         <tr class="bg-body-tertiary border-top border-light-subtle border-bottom border-2 border-light-subtle">
                             <td class="align-middle fw-bold text-primary" style="font-size: 0.85rem;">
                                 <i class="mdi mdi-circle-medium text-primary me-1"></i>Zabbix
@@ -223,9 +290,6 @@
                             <td class="align-middle">
                                 {% if item.zabbix_exists and item.zabbix_ip != "—" %}
                                     <code class="fw-bold fs-7">{{ item.zabbix_ip }}</code>
-                                    {% if item.zabbix_port %}
-                                        <span class="text-muted small">:(Port {{ item.zabbix_port }})</span>
-                                    {% endif %}
                                 {% else %}
                                     <span class="text-muted small">&mdash;</span>
                                 {% endif %}
@@ -271,67 +335,6 @@
                                     </div>
                                 {% else %}
                                     <span class="text-muted small">&mdash; None &mdash;</span>
-                                {% endif %}
-                            </td>
-
-                            <!-- ZABBIX SETTINGS & SNMP: Dedicated Zabbix Setting Column -->
-                            <td class="align-middle py-2">
-                                {% if item.zabbix_exists %}
-                                    <div class="d-flex flex-wrap gap-1 align-items-center">
-                                        <!-- Protocol -->
-                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold" style="font-size: 0.75rem;">
-                                            {{ item.zabbix_protocol }}
-                                        </span>
-
-                                        <!-- SNMP Version -->
-                                        {% if item.snmp_version != "—" %}
-                                            <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle fw-semibold" style="font-size: 0.75rem;">
-                                                {{ item.snmp_version }}
-                                            </span>
-                                        {% endif %}
-
-                                        <!-- SNMP Community (v1 / v2c) -->
-                                        {% if item.snmp_community != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;" title="SNMP Community">
-                                                Comm: {{ item.snmp_community }}
-                                            </span>
-                                        {% endif %}
-
-                                        <!-- SNMPv3 Security Name -->
-                                        {% if item.snmpv3_secname != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;" title="Security Name">
-                                                SecName: {{ item.snmpv3_secname }}
-                                            </span>
-                                        {% endif %}
-
-                                        <!-- SNMPv3 Security Level -->
-                                        {% if item.snmpv3_seclevel != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
-                                                {{ item.snmpv3_seclevel }}
-                                            </span>
-                                        {% endif %}
-
-                                        <!-- SNMPv3 Auth Protocol -->
-                                        {% if item.snmpv3_authproto != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
-                                                Auth: {{ item.snmpv3_authproto }}
-                                            </span>
-                                        {% endif %}
-
-                                        <!-- SNMPv3 Priv Protocol -->
-                                        {% if item.snmpv3_privproto != "—" %}
-                                            <span class="badge bg-light text-dark border fw-normal" style="font-size: 0.75rem;">
-                                                Priv: {{ item.snmpv3_privproto }}
-                                            </span>
-                                        {% endif %}
-
-                                        <!-- Monitored By Proxy / Server -->
-                                        <span class="text-muted small ms-1">
-                                            <i class="mdi mdi-server-network me-1"></i>{{ item.zabbix_monitored_by }}
-                                        </span>
-                                    </div>
-                                {% else %}
-                                    <span class="text-muted small">&mdash;</span>
                                 {% endif %}
                             </td>
                         </tr>
