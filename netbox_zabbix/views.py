@@ -709,13 +709,14 @@ class ZabbixHostsView(View):
             page_obj = paginator.page(1)
 
         headers = [
-            "Source System",
+            "Source",
             "Device Name",
             "Primary IP",
             "Status",
-            "Device Role / Host Groups",
-            "Configuration & SNMP Parameters",
-            "Match & Sync Status"
+            "Role / Host Groups",
+            "Attached Templates",
+            "Zabbix Settings & SNMP",
+            "Match Status & Action"
         ]
 
         context = {
