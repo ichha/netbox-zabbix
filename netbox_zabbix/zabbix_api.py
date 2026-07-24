@@ -96,10 +96,10 @@ class ZabbixAPI:
         })
 
     def get_hosts(self):
-        # 1. Primary Zabbix 7.0+ call with detailed interfaces, host groups, and parent templates
+        # Use selectInterfaces: "extend" to fetch all interface parameters and details
         res = self.call("host.get", {
             "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-            "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
+            "selectInterfaces": "extend",
             "selectHostGroups": ["groupid", "name"],
             "selectParentTemplates": ["templateid", "name"]
         })
@@ -107,21 +107,14 @@ class ZabbixAPI:
             # Fallback 1: Without selectParentTemplates
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
+                "selectInterfaces": "extend",
                 "selectHostGroups": ["groupid", "name"]
             })
         if isinstance(res, dict) and "error" in res:
             # Fallback 2: With selectGroups for older Zabbix releases
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
-                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
-                "selectGroups": ["groupid", "name"]
-            })
-        if isinstance(res, dict) and "error" in res:
-            # Fallback 3: Standard interface outputs
-            res = self.call("host.get", {
-                "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
-                "selectInterfaces": ["ip", "port", "type", "main"],
+                "selectInterfaces": "extend",
                 "selectGroups": ["groupid", "name"]
             })
         return res

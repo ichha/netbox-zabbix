@@ -630,7 +630,7 @@ class ZabbixHostsView(View):
                 z_groups = zh_target.get("hostgroups", []) or zh_target.get("groups", [])
                 item["zabbix_hostgroups"] = [g.get("name") for g in z_groups if isinstance(g, dict) and g.get("name")]
 
-                # Interfaces & Complete SNMP details
+                # Interfaces & Comprehensive SNMP extraction
                 interfaces = zh_target.get("interfaces", [])
                 if isinstance(interfaces, list) and len(interfaces) > 0:
                     main_iface = interfaces[0]
@@ -647,37 +647,56 @@ class ZabbixHostsView(View):
                     item["zabbix_protocol"] = "SNMP" if t_val == "2" else "IPMI" if t_val == "3" else "JMX" if t_val == "4" else "Agent"
 
                     details = main_iface.get("details", {})
-                    if isinstance(details, dict) and details:
-                        ver = str(details.get("version", "2"))
+                    if not isinstance(details, dict):
+                        details = {}
+
+                    # Extract version
+                    ver = str(details.get("version") or main_iface.get("version") or ("2" if t_val == "2" else ""))
+
+                    if t_val == "2" or ver in ["1", "2", "3", "2c"]:
                         if ver == "1":
                             item["snmp_version"] = "SNMPv1"
-                            item["snmp_community"] = details.get("community", "{$SNMP_COMMUNITY}")
-                        elif ver == "2":
+                        elif ver in ["2", "2c"]:
                             item["snmp_version"] = "SNMPv2c"
-                            item["snmp_community"] = details.get("community", "{$SNMP_COMMUNITY}")
                         elif ver == "3":
                             item["snmp_version"] = "SNMPv3"
-                            item["snmpv3_context"] = details.get("contextname", "") or "—"
-                            item["snmpv3_secname"] = details.get("securityname", "") or "—"
+                        elif t_val == "2":
+                            item["snmp_version"] = "SNMPv2c"
+
+                        # Community string
+                        comm = details.get("community") or main_iface.get("community")
+                        if comm:
+                            item["snmp_community"] = comm
+                        elif t_val == "2" and ver != "3":
+                            item["snmp_community"] = "{$SNMP_COMMUNITY}"
+
+                        # SNMPv3 fields
+                        if ver == "3":
+                            item["snmpv3_context"] = details.get("contextname") or main_iface.get("contextname") or "—"
+                            item["snmpv3_secname"] = details.get("securityname") or main_iface.get("securityname") or "—"
                             
-                            s_lvl = str(details.get("securitylevel", "0"))
+                            s_lvl = str(details.get("securitylevel") or main_iface.get("securitylevel") or "0")
                             item["snmpv3_seclevel"] = "authPriv" if s_lvl == "2" else "authNoPriv" if s_lvl == "1" else "noAuthNoPriv"
 
-                            a_pr = str(details.get("authprotocol", "0"))
+                            a_pr = str(details.get("authprotocol") or main_iface.get("authprotocol") or "0")
                             auth_map = {"0": "MD5", "1": "SHA1", "2": "SHA224", "3": "SHA256", "4": "SHA384", "5": "SHA512"}
                             item["snmpv3_authproto"] = auth_map.get(a_pr, a_pr)
-                            item["snmpv3_authpass"] = "••••••••" if details.get("authpassphrase") else "—"
 
-                            p_pr = str(details.get("privprotocol", "0"))
+                            apass = details.get("authpassphrase") or main_iface.get("authpassphrase")
+                            item["snmpv3_authpass"] = "••••••••" if apass else "—"
+
+                            p_pr = str(details.get("privprotocol") or main_iface.get("privprotocol") or "0")
                             priv_map = {"0": "DES", "1": "AES128", "2": "AES192", "3": "AES256", "4": "AES192C3GPP", "5": "AES256C3GPP"}
                             item["snmpv3_privproto"] = priv_map.get(p_pr, p_pr)
-                            item["snmpv3_privpass"] = "••••••••" if details.get("privpassphrase") else "—"
 
-                        max_rep = details.get("max_repetitions")
+                            ppass = details.get("privpassphrase") or main_iface.get("privpassphrase")
+                            item["snmpv3_privpass"] = "••••••••" if ppass else "—"
+
+                        max_rep = details.get("max_repetitions") or main_iface.get("max_repetitions")
                         if max_rep is not None and str(max_rep) != "":
                             item["snmp_max_repetitions"] = str(max_rep)
 
-                        bulk_val = details.get("bulk")
+                        bulk_val = details.get("bulk") or main_iface.get("bulk")
                         if bulk_val is not None:
                             item["snmp_bulk"] = "Yes" if str(bulk_val) == "1" else "No"
 
