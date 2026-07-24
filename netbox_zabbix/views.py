@@ -732,11 +732,21 @@ class ZabbixHostsView(View):
                         elif t_val == "2":
                             item["snmp_version"] = "SNMPv2c"
 
-                        # Extract Community string & Resolve Macro Variables
-                        raw_comm = details.get("community") or main_iface.get("community") or "{$SNMP_COMMUNITY}"
+                        # Extract Community string (directly from interface details or main_iface)
+                        raw_comm = None
+                        if isinstance(details, dict):
+                            raw_comm = details.get("community")
+                        if not raw_comm:
+                            raw_comm = main_iface.get("community")
+
                         if raw_comm:
-                            resolved_comm = host_macro_map.get(raw_comm, raw_comm)
+                            if str(raw_comm).startswith("{$"):
+                                resolved_comm = host_macro_map.get(raw_comm, raw_comm)
+                            else:
+                                resolved_comm = str(raw_comm)
                             item["snmp_community"] = resolved_comm
+                        elif "{$SNMP_COMMUNITY}" in host_macro_map:
+                            item["snmp_community"] = host_macro_map["{$SNMP_COMMUNITY}"]
 
                         # SNMPv3 fields
                         if ver == "3":
@@ -871,7 +881,7 @@ class ZabbixPushDeviceView(View):
         # 1. Host group ID
         hostgroup_id = None
         if role_name:
-            groups = api.call("hostgroup.create", {"filter": {"name": role_name}})
+            groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
             if isinstance(groups, list) and len(groups) > 0:
                 hostgroup_id = groups[0].get("groupid")
             else:

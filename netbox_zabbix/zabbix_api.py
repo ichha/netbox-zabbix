@@ -108,33 +108,32 @@ class ZabbixAPI:
         })
 
     def get_hosts(self):
-        # 1. Primary Zabbix 7.0 API query
+        # 1. Primary Zabbix 7.0 API query with selectInterfaces including details
         res = self.call("host.get", {
             "output": ["hostid", "host", "name", "status", "proxyid"],
             "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
             "selectHostGroups": ["groupid", "name"],
-            "selectParentTemplates": ["templateid", "name"],
             "selectMacros": ["macro", "value"]
         })
         if isinstance(res, dict) and "error" in res:
-            # Fallback 1: Standard interface fields with selectHostGroups
+            # Fallback 1: selectGroups for older Zabbix versions
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid"],
                 "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
-                "selectHostGroups": ["groupid", "name"]
+                "selectGroups": ["groupid", "name"],
+                "selectMacros": ["macro", "value"]
             })
         if isinstance(res, dict) and "error" in res:
-            # Fallback 2: Without details in selectInterfaces
+            # Fallback 2: selectInterfaces with details without groups/macros
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid"],
-                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port"],
-                "selectHostGroups": ["groupid", "name"]
+                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"]
             })
         if isinstance(res, dict) and "error" in res:
-            # Fallback 3: Minimal fields (GUARANTEED TO SUCCEED ON ALL ZABBIX VERSIONS)
+            # Fallback 3: selectInterfaces extend (Guaranteed to return details if supported)
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status"],
-                "selectInterfaces": ["ip", "port", "type", "main"]
+                "selectInterfaces": "extend"
             })
         return res
 
