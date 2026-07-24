@@ -96,10 +96,10 @@ class ZabbixAPI:
         })
 
     def get_hosts(self):
-        # Use selectInterfaces: "extend" to fetch all interface parameters and details
+        # 1. Primary Zabbix 7.0+ API query using explicit array parameters
         res = self.call("host.get", {
             "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-            "selectInterfaces": "extend",
+            "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
             "selectHostGroups": ["groupid", "name"],
             "selectParentTemplates": ["templateid", "name"]
         })
@@ -107,14 +107,21 @@ class ZabbixAPI:
             # Fallback 1: Without selectParentTemplates
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-                "selectInterfaces": "extend",
+                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
                 "selectHostGroups": ["groupid", "name"]
             })
         if isinstance(res, dict) and "error" in res:
-            # Fallback 2: With selectGroups for older Zabbix releases
+            # Fallback 2: Without details field in selectInterfaces
+            res = self.call("host.get", {
+                "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
+                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port"],
+                "selectHostGroups": ["groupid", "name"]
+            })
+        if isinstance(res, dict) and "error" in res:
+            # Fallback 3: Proven universal fallback for older Zabbix releases
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
-                "selectInterfaces": "extend",
+                "selectInterfaces": ["ip", "port", "type", "main"],
                 "selectGroups": ["groupid", "name"]
             })
         return res
