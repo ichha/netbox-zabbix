@@ -484,6 +484,10 @@ class ZabbixHostsView(View):
 
         # 2. Fetch Zabbix Hosts, Proxies, Global Macros, and Template-Host links
         zabbix_hosts = api.get_hosts()
+        zabbix_error = None
+        if isinstance(zabbix_hosts, dict) and "error" in zabbix_hosts:
+            zabbix_error = zabbix_hosts["error"]
+            zabbix_hosts = []
         
         proxy_map = {}
         try:
@@ -831,6 +835,7 @@ class ZabbixHostsView(View):
             'has_status': True,
             'is_hosts_view': True,
             'q': q,
+            'error': zabbix_error,
         }
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
