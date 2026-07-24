@@ -482,7 +482,7 @@ class ZabbixHostsView(View):
                 Q(role__name__icontains=q)
             )
 
-        # 2. Fetch Zabbix Hosts & Proxies
+        # 2. Fetch Zabbix Hosts, Proxies, and Global Macros
         zabbix_hosts = api.get_hosts()
         
         proxy_map = {}
@@ -494,6 +494,18 @@ class ZabbixHostsView(View):
                     p_name = p.get("name") or p.get("host")
                     if p_id and p_name:
                         proxy_map[p_id] = p_name
+        except Exception:
+            pass
+
+        global_macros = {}
+        try:
+            g_macs = api.get_macros()
+            if isinstance(g_macs, list):
+                for gm in g_macs:
+                    m_key = gm.get("macro", "").strip()
+                    m_val = gm.get("value", "").strip()
+                    if m_key:
+                        global_macros[m_key] = m_val
         except Exception:
             pass
 
@@ -622,15 +634,33 @@ class ZabbixHostsView(View):
                 z_st = str(zh_target.get("status", "0"))
                 item["zabbix_status"] = "Monitored" if z_st == "0" else "Disabled"
 
-                # Attached templates
+                # Attached templates (checking parentTemplates and templates)
                 z_templates = zh_target.get("parentTemplates", []) or zh_target.get("templates", [])
-                item["zabbix_templates"] = [t.get("name") for t in z_templates if isinstance(t, dict) and t.get("name")]
+                template_names = []
+                if isinstance(z_templates, list):
+                    for t in z_templates:
+                        if isinstance(t, dict):
+                            t_n = t.get("name") or t.get("host")
+                            if t_n:
+                                template_names.append(t_n)
+                item["zabbix_templates"] = template_names
 
                 # Host groups
                 z_groups = zh_target.get("hostgroups", []) or zh_target.get("groups", [])
                 item["zabbix_hostgroups"] = [g.get("name") for g in z_groups if isinstance(g, dict) and g.get("name")]
 
-                # Interfaces & Comprehensive SNMP extraction
+                # Build merged macros for this host (Host-level macros override global macros)
+                host_macro_map = dict(global_macros)
+                host_macros_list = zh_target.get("macros", [])
+                if isinstance(host_macros_list, list):
+                    for hm in host_macros_list:
+                        if isinstance(hm, dict):
+                            m_k = hm.get("macro", "").strip()
+                            m_v = hm.get("value", "").strip()
+                            if m_k:
+                                host_macro_map[m_k] = m_v
+
+                # Interfaces & Complete SNMP details
                 interfaces = zh_target.get("interfaces", [])
                 if isinstance(interfaces, list) and len(interfaces) > 0:
                     main_iface = interfaces[0]
@@ -663,12 +693,11 @@ class ZabbixHostsView(View):
                         elif t_val == "2":
                             item["snmp_version"] = "SNMPv2c"
 
-                        # Community string
-                        comm = details.get("community") or main_iface.get("community")
-                        if comm:
-                            item["snmp_community"] = comm
-                        elif t_val == "2" and ver != "3":
-                            item["snmp_community"] = "{$SNMP_COMMUNITY}"
+                        # Extract Community string & Resolve Macro Variables
+                        raw_comm = details.get("community") or main_iface.get("community") or "{$SNMP_COMMUNITY}"
+                        if raw_comm:
+                            resolved_comm = host_macro_map.get(raw_comm, raw_comm)
+                            item["snmp_community"] = resolved_comm
 
                         # SNMPv3 fields
                         if ver == "3":

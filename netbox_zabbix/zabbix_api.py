@@ -96,33 +96,40 @@ class ZabbixAPI:
         })
 
     def get_hosts(self):
-        # 1. Primary Zabbix 7.0+ API query using explicit array parameters
+        # 1. Primary Zabbix 7.0+ API query with templates, macros, interfaces, and host groups
         res = self.call("host.get", {
             "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
             "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
             "selectHostGroups": ["groupid", "name"],
-            "selectParentTemplates": ["templateid", "name"]
+            "selectParentTemplates": ["templateid", "name"],
+            "selectTemplates": ["templateid", "name"],
+            "selectMacros": ["macro", "value"]
         })
         if isinstance(res, dict) and "error" in res:
-            # Fallback 1: Without selectParentTemplates
+            # Fallback 1: Without selectParentTemplates (use selectTemplates)
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
                 "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
-                "selectHostGroups": ["groupid", "name"]
+                "selectHostGroups": ["groupid", "name"],
+                "selectTemplates": ["templateid", "name"],
+                "selectMacros": ["macro", "value"]
             })
         if isinstance(res, dict) and "error" in res:
-            # Fallback 2: Without details field in selectInterfaces
+            # Fallback 2: Legacy groups query with selectTemplates and selectMacros
             res = self.call("host.get", {
-                "output": ["hostid", "host", "name", "status", "proxyid", "proxy_groupid", "monitored_by"],
-                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port"],
-                "selectHostGroups": ["groupid", "name"]
+                "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
+                "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
+                "selectGroups": ["groupid", "name"],
+                "selectTemplates": ["templateid", "name"],
+                "selectMacros": ["macro", "value"]
             })
         if isinstance(res, dict) and "error" in res:
-            # Fallback 3: Proven universal fallback for older Zabbix releases
+            # Fallback 3: Basic interfaces with selectTemplates
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid", "proxy_hostid"],
                 "selectInterfaces": ["ip", "port", "type", "main"],
-                "selectGroups": ["groupid", "name"]
+                "selectGroups": ["groupid", "name"],
+                "selectTemplates": ["templateid", "name"]
             })
         return res
 
