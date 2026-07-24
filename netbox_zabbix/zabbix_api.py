@@ -137,7 +137,7 @@ class ZabbixAPI:
                     if isinstance(t, dict):
                         tags_set.add((t.get("tag", ""), t.get("value", "")))
         if isinstance(templates, list):
-            for tm from templates:
+            for tm in templates:
                 for t in tm.get("tags", []):
                     if isinstance(t, dict):
                         tags_set.add((t.get("tag", ""), t.get("value", "")))
