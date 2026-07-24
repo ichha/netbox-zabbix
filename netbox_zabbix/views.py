@@ -482,7 +482,7 @@ class ZabbixHostsView(View):
                 Q(role__name__icontains=q)
             )
 
-        # 2. Fetch Zabbix Hosts, Proxies, and Global Macros
+        # 2. Fetch Zabbix Hosts, Proxies, Global Macros, and Template-Host links
         zabbix_hosts = api.get_hosts()
         
         proxy_map = {}
@@ -508,6 +508,26 @@ class ZabbixHostsView(View):
                         global_macros[m_key] = m_val
         except Exception:
             pass
+
+        host_template_map = {} # hostid -> list of template names
+        try:
+            raw_tmpl_hosts = api.get_templates_with_hosts()
+            if isinstance(raw_tmpl_hosts, list):
+                for tmpl in raw_tmpl_hosts:
+                    if isinstance(tmpl, dict):
+                        t_name = tmpl.get("name") or tmpl.get("host")
+                        h_list = tmpl.get("hosts", [])
+                        if t_name and isinstance(h_list, list):
+                            for h_elem in h_list:
+                                if isinstance(h_elem, dict):
+                                    hid = str(h_elem.get("hostid", ""))
+                                    if hid:
+                                        if hid not in host_template_map:
+                                            host_template_map[hid] = []
+                                        if t_name not in host_template_map[hid]:
+                                            host_template_map[hid].append(t_name)
+        except Exception as e:
+            logger.error(f"Error fetching templates with hosts: {e}")
 
         zabbix_name_map = {} # Lowercase Name/Host -> List of Zabbix host objects
         zabbix_ip_map = {}   # IP Address -> List of Zabbix host objects
@@ -625,7 +645,8 @@ class ZabbixHostsView(View):
                 matched_count += 1
                 zh_target = matching_zabbix_host
                 item["zabbix_exists"] = True
-                item["zabbix_hostid"] = zh_target.get("hostid", "")
+                zh_hid = str(zh_target.get("hostid", ""))
+                item["zabbix_hostid"] = zh_hid
                 
                 c_tech = zh_target.get("host", "")
                 c_vis = zh_target.get("name", "")
@@ -634,7 +655,7 @@ class ZabbixHostsView(View):
                 z_st = str(zh_target.get("status", "0"))
                 item["zabbix_status"] = "Monitored" if z_st == "0" else "Disabled"
 
-                # Comprehensive attached template extraction
+                # Attached templates extraction with fallback to host_template_map
                 all_t_objs = []
                 for k in ["parentTemplates", "templates", "inheritedTemplates"]:
                     t_list = zh_target.get(k)
@@ -649,6 +670,14 @@ class ZabbixHostsView(View):
                         if t_n and t_n not in seen_t:
                             seen_t.add(t_n)
                             template_names.append(t_n)
+
+                # Merge from template.get mapping if hostid in map
+                if zh_hid and zh_hid in host_template_map:
+                    for t_n in host_template_map[zh_hid]:
+                        if t_n not in seen_t:
+                            seen_t.add(t_n)
+                            template_names.append(t_n)
+
                 item["zabbix_templates"] = template_names
 
                 # Host groups
