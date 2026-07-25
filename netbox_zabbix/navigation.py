@@ -14,6 +14,8 @@ menu = PluginMenu(
             PluginMenuItem(link='plugins:netbox_zabbix:tags', link_text='Tags'),
             PluginMenuItem(link='plugins:netbox_zabbix:hostgroups', link_text='Hostgroups'),
             PluginMenuItem(link='plugins:netbox_zabbix:hosts', link_text='Hosts'),
+            PluginMenuItem(link='plugins:netbox_zabbix:bulk_push', link_text='Bulk Push'),
         )),
     )
 )
+

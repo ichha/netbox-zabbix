@@ -2,6 +2,7 @@ from django.views.generic import View
 from django.shortcuts import render, redirect
 from django.contrib import messages
 from django.core.paginator import Paginator
+from django.http import JsonResponse
 from django.db.models import Q
 import logging
 from .zabbix_api import ZabbixAPI
@@ -1037,3 +1038,241 @@ class ZabbixSyncRoleView(View):
             messages.success(request, f"Successfully created/assigned Zabbix Host Group '{role_name}' for host ID {host_id}!")
             
         return redirect('plugins:netbox_zabbix:hosts')
+
+
+class ZabbixBulkPushView(View):
+    """Bulk push all devices for a specific role to Zabbix in batches."""
+    
+    def get(self, request):
+        """Show bulk push page with roles and device counts."""
+        from dcim.models import Device, DeviceRole
+        from .template_storage import get_role_zabbix_settings
+        
+        api = ZabbixAPI()
+        
+        # Get all roles that have Zabbix settings configured
+        from .models import ZabbixHostGroupTemplate
+        configured_roles = ZabbixHostGroupTemplate.objects.all()
+        
+        roles_data = []
+        for cfg in configured_roles:
+            role_name = cfg.role_name
+            settings = get_role_zabbix_settings(role_name)
+            device_count = Device.objects.filter(role__name=role_name).count()
+            active_count = Device.objects.filter(role__name=role_name, primary_ip4__isnull=False).count()
+            roles_data.append({
+                'role_name': role_name,
+                'device_count': device_count,
+                'pushable_count': active_count,
+                'interface_type': settings.get('interface_type', 'N/A'),
+                'template_count': len(settings.get('templates', [])),
+                'proxy_name': settings.get('proxy_name') or 'Server',
+            })
+        
+        # Auto-sync state
+        from .models import ZabbixSyncState
+        sync_enabled = ZabbixSyncState.is_enabled()
+        
+        return render(request, 'netbox_zabbix/bulk_push.html', {
+            'roles_data': roles_data,
+            'sync_enabled': sync_enabled,
+            'title': 'Bulk Push to Zabbix',
+        })
+    
+    def post(self, request):
+        """Execute bulk push for a role. Returns JSON progress result."""
+        import json
+        from dcim.models import Device
+        from .signals import push_device_to_zabbix
+        from .template_storage import get_role_zabbix_settings
+        from .signals import build_snmp_details, get_or_create_hostgroup_id, execute_zabbix_host_save
+        
+        action = request.POST.get('action', 'push')
+        
+        # Handle toggle auto-sync
+        if action == 'toggle_sync':
+            from .models import ZabbixSyncState
+            state = ZabbixSyncState.get_state()
+            state.auto_sync_enabled = not state.auto_sync_enabled
+            state.save()
+            new_state = 'enabled' if state.auto_sync_enabled else 'disabled'
+            return JsonResponse({'success': True, 'sync_enabled': state.auto_sync_enabled, 'message': f'Auto-sync {new_state}'})
+        
+        role_name = request.POST.get('role_name')
+        if not role_name:
+            return JsonResponse({'success': False, 'error': 'No role specified'})
+        
+        settings = get_role_zabbix_settings(role_name)
+        if_type_str = settings.get('interface_type') or 'SNMP'
+        mapped_tmpls = settings.get('templates', [])
+        proxy_id = str(settings.get('proxy_id') or '0')
+        tmpl_payload = [{'templateid': str(t['id'])} for t in mapped_tmpls]
+        
+        api = ZabbixAPI()
+        hostgroup_id = get_or_create_hostgroup_id(api, role_name)
+        
+        # Fetch ALL devices for this role
+        devices = list(Device.objects.filter(role__name=role_name).select_related(
+            'role', 'primary_ip4', 'primary_ip6'
+        ))
+        
+        # Determine interface type numbers
+        if if_type_str == 'Agent':
+            if_type_num, port_num = 1, '10050'
+        elif if_type_str == 'IPMI':
+            if_type_num, port_num = 3, '623'
+        elif if_type_str == 'JMX':
+            if_type_num, port_num = 4, '12345'
+        else:
+            if_type_num, port_num = 2, '161'
+        
+        # Build payloads for all valid devices
+        create_payloads = []
+        update_payloads = []
+        skipped = []
+        
+        # Step 1: Get ALL existing Zabbix hosts for this role in ONE API call
+        device_names = [d.name for d in devices if d.name]
+        existing_hosts_raw = []
+        CHUNK = 500
+        for i in range(0, len(device_names), CHUNK):
+            chunk_names = device_names[i:i+CHUNK]
+            result = api.call('host.get', {
+                'filter': {'host': chunk_names},
+                'selectInterfaces': ['interfaceid', 'type', 'main', 'ip', 'port'],
+                'output': ['hostid', 'host', 'name']
+            })
+            if isinstance(result, list):
+                existing_hosts_raw.extend(result)
+        
+        existing_map = {h['host']: h for h in existing_hosts_raw}  # host tech name → host data
+        
+        # Step 2: Build payloads
+        for device in devices:
+            device_name = device.name
+            if not device_name:
+                skipped.append({'name': '(unnamed)', 'reason': 'No name'})
+                continue
+            
+            # Get IP
+            nb_ip = None
+            if device.primary_ip4:
+                nb_ip = str(device.primary_ip4.address).split('/')[0]
+            elif device.primary_ip6:
+                nb_ip = str(device.primary_ip6.address).split('/')[0]
+            
+            if not nb_ip:
+                skipped.append({'name': device_name, 'reason': 'No Primary IP'})
+                continue
+            
+            # SNMP check
+            cf_data = getattr(device, 'custom_field_data', {}) or {}
+            details_payload = None
+            if if_type_str == 'SNMP':
+                details_payload, _, _ = build_snmp_details(cf_data)
+                if details_payload is None:
+                    skipped.append({'name': device_name, 'reason': 'No SNMP credentials'})
+                    continue
+            
+            # Device status
+            nb_status = str(getattr(device.status, 'value', None) or getattr(device, 'status', 'active') or 'active').lower()
+            zabbix_status = 0 if nb_status == 'active' else 1
+            
+            # Build interface
+            if_payload = {
+                'type': if_type_num,
+                'main': 1,
+                'useip': 1,
+                'ip': nb_ip,
+                'dns': '',
+                'port': port_num
+            }
+            if details_payload:
+                if_payload['details'] = details_payload
+            
+            if device_name in existing_map:
+                existing = existing_map[device_name]
+                hid = existing['hostid']
+                ifaces = existing.get('interfaces', [])
+                if isinstance(ifaces, list) and len(ifaces) > 0:
+                    main_iface = ifaces[0]
+                    for ifc in ifaces:
+                        if str(ifc.get('main')) == '1':
+                            main_iface = ifc
+                            break
+                    if 'interfaceid' in main_iface:
+                        if_payload['interfaceid'] = main_iface['interfaceid']
+                
+                upd = {
+                    'hostid': hid,
+                    'groups': [{'groupid': hostgroup_id}],
+                    'interfaces': [if_payload],
+                    'status': zabbix_status
+                }
+                if tmpl_payload:
+                    upd['templates'] = tmpl_payload
+                update_payloads.append((device_name, upd))
+            else:
+                crt = {
+                    'host': device_name,
+                    'name': device_name,
+                    'interfaces': [if_payload],
+                    'groups': [{'groupid': hostgroup_id}],
+                    'status': zabbix_status
+                }
+                if tmpl_payload:
+                    crt['templates'] = tmpl_payload
+                create_payloads.append((device_name, crt))
+        
+        # Step 3: Batch create — Zabbix supports array of hosts in one call
+        created_ok = []
+        created_fail = []
+        BATCH = 100
+        
+        for i in range(0, len(create_payloads), BATCH):
+            batch = create_payloads[i:i+BATCH]
+            names = [b[0] for b in batch]
+            payloads = [b[1] for b in batch]
+            
+            # Apply monitoring mode to each
+            for p in payloads:
+                from .signals import apply_monitoring_mode
+                apply_monitoring_mode(p, proxy_id)
+            
+            res = api.call('host.create', payloads)
+            if isinstance(res, dict) and 'error' in res:
+                # Try one by one
+                for name, p in batch:
+                    r = api.call('host.create', p)
+                    if isinstance(r, dict) and 'error' in r:
+                        created_fail.append({'name': name, 'reason': str(r['error'])})
+                    else:
+                        created_ok.append(name)
+            else:
+                created_ok.extend(names)
+        
+        # Step 4: Updates (individual — Zabbix host.update is per-host)
+        updated_ok = []
+        updated_fail = []
+        for name, upd in update_payloads:
+            from .signals import apply_monitoring_mode
+            apply_monitoring_mode(upd, proxy_id)
+            res = api.call('host.update', upd)
+            if isinstance(res, dict) and 'error' in res:
+                updated_fail.append({'name': name, 'reason': str(res['error'])})
+            else:
+                updated_ok.append(name)
+        
+        return JsonResponse({
+            'success': True,
+            'role_name': role_name,
+            'total': len(devices),
+            'created': len(created_ok),
+            'updated': len(updated_ok),
+            'skipped': len(skipped),
+            'failed': len(created_fail) + len(updated_fail),
+            'skipped_details': skipped[:50],
+            'failed_details': (created_fail + updated_fail)[:50],
+            'created_names': created_ok[:20],
+            'updated_names': updated_ok[:20],
+        })

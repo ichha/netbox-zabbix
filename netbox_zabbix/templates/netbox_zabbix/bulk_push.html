@@ -1,0 +1,195 @@
+{% extends 'base/layout.html' %}
+{% block title %}Bulk Push to Zabbix{% endblock %}
+{% block content %}
+<div class="container-fluid px-3">
+
+  <!-- Header -->
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h4 class="fw-bold mb-0"><i class="mdi mdi-cloud-upload me-2 text-primary"></i>Bulk Push to Zabbix</h4>
+      <p class="text-muted small mb-0">Push all devices for a role to Zabbix in optimized batches (up to 100 hosts per API call).</p>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <!-- Auto-Sync Toggle -->
+      <form id="syncToggleForm" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="toggle_sync">
+        <button type="button" id="syncToggleBtn" class="btn btn-sm fw-bold {% if sync_enabled %}btn-success{% else %}btn-danger{% endif %}" onclick="toggleSync()">
+          <i class="mdi {% if sync_enabled %}mdi-sync me-1{% else %}mdi-sync-off me-1{% endif %}" id="syncIcon"></i>
+          <span id="syncLabel">{% if sync_enabled %}Auto-Sync: ON{% else %}Auto-Sync: OFF{% endif %}</span>
+        </button>
+      </form>
+      <a href="{% url 'plugins:netbox_zabbix:hostgroups' %}" class="btn btn-sm btn-outline-secondary">
+        <i class="mdi mdi-arrow-left me-1"></i>Back to Host Groups
+      </a>
+    </div>
+  </div>
+
+  <!-- Info Banner -->
+  <div class="alert alert-info alert-dismissible fade show mb-3" role="alert" style="font-size:0.88rem;">
+    <i class="mdi mdi-information-outline me-1"></i>
+    <strong>Bulk Push</strong> is <strong>100× faster</strong> than single-device sync. It fetches all existing Zabbix hosts in one API call, then batches creates up to 100 hosts per call.
+    <strong class="ms-2">Auto-Sync OFF</strong> is recommended during large CSV imports to avoid per-device API calls.
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>
+
+  <!-- Roles Table -->
+  <div class="card shadow-sm border-0">
+    <div class="card-header bg-primary text-white py-2 d-flex align-items-center justify-content-between">
+      <span class="fw-bold"><i class="mdi mdi-table me-1"></i>Configured Roles</span>
+      <span class="badge bg-white text-primary">{{ roles_data|length }} roles</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Role Name</th>
+            <th>Total Devices</th>
+            <th>Has IP (Pushable)</th>
+            <th>Interface Type</th>
+            <th>Templates</th>
+            <th>Proxy</th>
+            <th class="text-end">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in roles_data %}
+          <tr id="row-{{ forloop.counter }}">
+            <td class="fw-bold">{{ r.role_name }}</td>
+            <td><span class="badge bg-secondary-subtle text-dark border">{{ r.device_count }}</span></td>
+            <td><span class="badge bg-success-subtle text-dark border">{{ r.pushable_count }}</span></td>
+            <td><span class="badge bg-info-subtle text-dark border">{{ r.interface_type }}</span></td>
+            <td><span class="badge bg-light text-dark border">{{ r.template_count }} templates</span></td>
+            <td class="text-muted small">{{ r.proxy_name }}</td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-primary fw-bold" onclick="bulkPush('{{ r.role_name|escapejs }}', this)" id="btn-{{ forloop.counter }}">
+                <i class="mdi mdi-cloud-upload me-1"></i>Push Role
+              </button>
+              <div class="mt-1" id="result-{{ forloop.counter }}"></div>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-4">No roles configured. Go to <a href="{% url 'plugins:netbox_zabbix:hostgroups' %}">Host Groups</a> to add Zabbix settings.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- Result Modal -->
+<div class="modal fade" id="bulkResultModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title"><i class="mdi mdi-cloud-check me-2"></i>Bulk Push Result</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="bulkResultBody">Loading...</div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 
+             '{{ csrf_token }}';
+
+function bulkPush(roleName, btn) {
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Pushing...';
+  
+  const formData = new FormData();
+  formData.append('action', 'push');
+  formData.append('role_name', roleName);
+  formData.append('csrfmiddlewaretoken', CSRF);
+  
+  fetch('{% url "plugins:netbox_zabbix:bulk_push" %}', {
+    method: 'POST',
+    body: formData,
+    headers: {'X-Requested-With': 'XMLHttpRequest'}
+  })
+  .then(r => r.json())
+  .then(data => {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    showResult(data);
+  })
+  .catch(err => {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    showResult({success: false, error: String(err)});
+  });
+}
+
+function showResult(data) {
+  const body = document.getElementById('bulkResultBody');
+  if (!data.success) {
+    body.innerHTML = `<div class="alert alert-danger"><i class="mdi mdi-alert-circle me-1"></i>${data.error || 'Unknown error'}</div>`;
+  } else {
+    body.innerHTML = `
+      <div class="row g-2 mb-3">
+        <div class="col-6 col-md-3">
+          <div class="card border-0 bg-secondary-subtle text-center p-2">
+            <div class="fs-3 fw-bold">${data.total}</div>
+            <div class="text-muted small">Total Devices</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card border-0 bg-success-subtle text-center p-2">
+            <div class="fs-3 fw-bold text-success">${data.created}</div>
+            <div class="text-muted small">Created</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card border-0 bg-primary-subtle text-center p-2">
+            <div class="fs-3 fw-bold text-primary">${data.updated}</div>
+            <div class="text-muted small">Updated</div>
+          </div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card border-0 bg-warning-subtle text-center p-2">
+            <div class="fs-3 fw-bold text-warning">${data.skipped}</div>
+            <div class="text-muted small">Skipped</div>
+          </div>
+        </div>
+      </div>
+      ${data.failed > 0 ? `<div class="alert alert-danger"><i class="mdi mdi-alert me-1"></i><strong>${data.failed} failed.</strong> ${data.failed_details.map(f => f.name + ': ' + f.reason).join(' | ')}</div>` : ''}
+      ${data.skipped > 0 ? `<div class="alert alert-warning small"><strong>Skipped reasons:</strong> ${data.skipped_details.map(s => s.name + ' — ' + s.reason).slice(0,10).join(', ')}</div>` : ''}
+      <p class="text-success fw-bold mb-0"><i class="mdi mdi-check-circle me-1"></i>Role <strong>${data.role_name}</strong>: ${data.created} created, ${data.updated} updated successfully.</p>
+    `;
+  }
+  new bootstrap.Modal(document.getElementById('bulkResultModal')).show();
+}
+
+function toggleSync() {
+  const formData = new FormData();
+  formData.append('action', 'toggle_sync');
+  formData.append('csrfmiddlewaretoken', CSRF);
+  
+  fetch('{% url "plugins:netbox_zabbix:bulk_push" %}', {
+    method: 'POST',
+    body: formData,
+  })
+  .then(r => r.json())
+  .then(data => {
+    const btn = document.getElementById('syncToggleBtn');
+    const icon = document.getElementById('syncIcon');
+    const label = document.getElementById('syncLabel');
+    if (data.sync_enabled) {
+      btn.className = 'btn btn-sm fw-bold btn-success';
+      icon.className = 'mdi mdi-sync me-1';
+      label.textContent = 'Auto-Sync: ON';
+    } else {
+      btn.className = 'btn btn-sm fw-bold btn-danger';
+      icon.className = 'mdi mdi-sync-off me-1';
+      label.textContent = 'Auto-Sync: OFF';
+    }
+  });
+}
+</script>
+{% endblock %}

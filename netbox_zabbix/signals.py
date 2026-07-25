@@ -7,6 +7,15 @@ from .template_storage import get_role_zabbix_settings
 
 logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
+import threading
+_sync_state = threading.local()
+
+def is_sync_paused():
+    return getattr(_sync_state, 'paused', False)
+
+def set_sync_paused(value: bool):
+    _sync_state.paused = value
+
 
 def build_snmp_details(cf_data):
     """
@@ -378,11 +387,24 @@ def sync_device_role_to_zabbix_on_delete(sender, instance, **kwargs):
 # ==========================================
 
 @receiver(post_save, sender=Device)
-def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
+def sync_device_to_zabbix_on_save(sender, instance, created, raw=False, **kwargs):
     """
     Triggered on every NetBox Device save.
     Guards: Primary IP required, Zabbix settings required, SNMP credentials required for SNMP type.
     """
+    if raw:
+        logger.info(f"[Zabbix Signal] Skipping '{instance.name}' — raw fixture load.")
+        return
+    if is_sync_paused():
+        logger.info(f"[Zabbix Signal] Skipping '{instance.name}' — auto-sync is paused.")
+        return
+    try:
+        from .models import ZabbixSyncState
+        if not ZabbixSyncState.is_enabled():
+            logger.info(f"[Zabbix Signal] Auto-sync disabled. Skipping '{instance.name}'.")
+            return
+    except Exception:
+        pass
     push_device_to_zabbix(instance, reason="Device saved in NetBox")
 
 

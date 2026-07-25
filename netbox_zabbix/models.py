@@ -19,3 +19,26 @@ class ZabbixHostGroupTemplate(models.Model):
 
     def __str__(self):
         return f"{self.role_name} ({len(self.template_ids)} templates)"
+
+
+class ZabbixSyncState(models.Model):
+    """
+    Stores global Zabbix auto-sync on/off state.
+    """
+    auto_sync_enabled = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = 'Zabbix Sync State'
+    
+    @classmethod
+    def get_state(cls):
+        obj, _ = cls.objects.get_or_create(pk=1, defaults={'auto_sync_enabled': True})
+        return obj
+    
+    @classmethod
+    def is_enabled(cls):
+        try:
+            return cls.get_state().auto_sync_enabled
+        except Exception:
+            return True
