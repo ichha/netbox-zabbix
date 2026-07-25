@@ -5,7 +5,7 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 import logging
 from .zabbix_api import ZabbixAPI
-from .template_storage import get_mapped_templates, get_role_zabbix_settings, save_mapped_templates
+from .template_storage import get_mapped_templates, get_role_zabbix_settings, save_mapped_templates, remove_role_zabbix_settings
 
 logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
@@ -348,11 +348,12 @@ class ZabbixHostGroupsView(View):
                 "type": "mapped_settings",
                 "role_name": r_name,
                 "role_slug": role_slug,
+                "has_settings": settings.get("has_settings", False),
                 "templates": settings.get("templates", []),
                 "template_ids": [str(t["id"]) for t in settings.get("templates", [])],
-                "interface_type": settings.get("interface_type", "SNMP"),
-                "proxy_id": str(settings.get("proxy_id", "0")),
-                "proxy_name": settings.get("proxy_name", "Server")
+                "interface_type": settings.get("interface_type") or "SNMP",
+                "proxy_id": str(settings.get("proxy_id") or "0"),
+                "proxy_name": settings.get("proxy_name") or "Server"
             }
 
             if r_lower in zabbix_group_map:
@@ -387,11 +388,12 @@ class ZabbixHostGroupsView(View):
                         "type": "mapped_settings",
                         "role_name": g_name,
                         "role_slug": role_slug,
+                        "has_settings": settings.get("has_settings", False),
                         "templates": settings.get("templates", []),
                         "template_ids": [str(t["id"]) for t in settings.get("templates", [])],
-                        "interface_type": settings.get("interface_type", "SNMP"),
-                        "proxy_id": str(settings.get("proxy_id", "0")),
-                        "proxy_name": settings.get("proxy_name", "Server")
+                        "interface_type": settings.get("interface_type") or "SNMP",
+                        "proxy_id": str(settings.get("proxy_id") or "0"),
+                        "proxy_name": settings.get("proxy_name") or "Server"
                     }
                     items.append([
                         g.get("groupid", "-"),
@@ -447,6 +449,18 @@ class ZabbixMapTemplatesView(View):
         save_mapped_templates(role_name, template_ids, template_names, interface_type, proxy_id, proxy_name)
 
         messages.success(request, f"Successfully saved Zabbix Settings for '{role_name}' (Templates: {len(template_ids)}, Type: {interface_type}, Bound to: {proxy_name})!")
+        return redirect('plugins:netbox_zabbix:hostgroups')
+
+
+class ZabbixClearSettingsView(View):
+    def post(self, request):
+        role_name = request.POST.get('role_name')
+        if not role_name:
+            messages.error(request, "Missing Role name.")
+            return redirect('plugins:netbox_zabbix:hostgroups')
+
+        remove_role_zabbix_settings(role_name)
+        messages.success(request, f"Successfully cleared Zabbix Settings for '{role_name}'.")
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
@@ -975,7 +989,7 @@ class ZabbixPushDeviceView(View):
         tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
 
         # Determine Interface Type (SNMP=2, Agent=1, IPMI=3, JMX=4)
-        if_type_str = settings.get("interface_type", "SNMP")
+        if_type_str = settings.get("interface_type") or "SNMP"
         if_type_num = 2 if if_type_str == 'SNMP' else 1 if if_type_str == 'Agent' else 3 if if_type_str == 'IPMI' else 4 if if_type_str == 'JMX' else 2
         port_num = "161" if if_type_num == 2 else "10050" if if_type_num == 1 else "623" if if_type_num == 3 else "12345"
 
@@ -995,7 +1009,7 @@ class ZabbixPushDeviceView(View):
                 "max_repetitions": 10
             }
 
-        proxy_id = str(settings.get("proxy_id", "0"))
+        proxy_id = str(settings.get("proxy_id") or "0")
 
         # 3. Check if host already exists in Zabbix
         existing = api.call("host.get", {"filter": {"host": device_name}})

@@ -12,6 +12,7 @@ urlpatterns = [
     path('hostgroups/', views.ZabbixHostGroupsView.as_view(), name='hostgroups'),
     path('create-hostgroup/', views.ZabbixCreateHostGroupView.as_view(), name='create_hostgroup'),
     path('map-templates/', views.ZabbixMapTemplatesView.as_view(), name='map_templates'),
+    path('clear-settings/', views.ZabbixClearSettingsView.as_view(), name='clear_settings'),
     path('remove-template/', views.ZabbixRemoveTemplateView.as_view(), name='remove_template'),
     path('hosts/', views.ZabbixHostsView.as_view(), name='hosts'),
     path('sync-role/', views.ZabbixSyncRoleView.as_view(), name='sync_role'),
