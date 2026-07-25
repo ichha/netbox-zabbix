@@ -699,7 +699,7 @@ class ZabbixHostsView(View):
         else:
             filtered_devs = all_devices_list
             matched_count = sum(1 for dev in all_devices_list if is_dev_matched(dev))
-            mismatch_count = total_devices - mismatch_count
+            mismatch_count = total_devices - matched_count
 
         filtered_count = len(filtered_devs)
 
