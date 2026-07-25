@@ -1090,17 +1090,6 @@ class ZabbixPushDeviceView(View):
             if tmpl_payload:
                 upd_params["templates"] = tmpl_payload
 
-            if proxy_id == "0":
-                upd_params["monitored_by"] = 0
-                upd_params["proxyid"] = "0"
-            elif proxy_id.startswith("group_"):
-                upd_params["monitored_by"] = 2
-                upd_params["proxy_groupid"] = proxy_id.replace("group_", "")
-                upd_params["proxyid"] = "0"
-            else:
-                upd_params["monitored_by"] = 1
-                upd_params["proxyid"] = proxy_id
-
             res = execute_zabbix_host_save(api, True, upd_params, proxy_id)
             if isinstance(res, dict) and "error" in res:
                 messages.error(request, f"Failed to update device '{device_name}' in Zabbix: {res['error']}")
@@ -1115,17 +1104,6 @@ class ZabbixPushDeviceView(View):
             }
             if tmpl_payload:
                 create_params["templates"] = tmpl_payload
-
-            if proxy_id == "0":
-                create_params["monitored_by"] = 0
-                create_params["proxyid"] = "0"
-            elif proxy_id.startswith("group_"):
-                create_params["monitored_by"] = 2
-                create_params["proxy_groupid"] = proxy_id.replace("group_", "")
-                create_params["proxyid"] = "0"
-            else:
-                create_params["monitored_by"] = 1
-                create_params["proxyid"] = proxy_id
 
             res = execute_zabbix_host_save(api, False, create_params, proxy_id)
             if isinstance(res, dict) and "error" in res:

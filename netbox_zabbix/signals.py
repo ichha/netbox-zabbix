@@ -109,35 +109,54 @@ def get_or_create_hostgroup_id(api, role_name):
     return "2"
 
 
+def apply_monitoring_mode(params, proxy_id_str):
+    """
+    Sets Zabbix 7.0 monitoring mode parameters on host payload:
+    - Server: monitored_by = 0 (omit proxyid)
+    - Proxy: monitored_by = 1, proxyid = proxy_id_str
+    - Proxy Group: monitored_by = 2, proxy_groupid = group_id
+    """
+    p_str = str(proxy_id_str or "0").strip()
+    if p_str == "0" or not p_str:
+        params["monitored_by"] = 0
+        params.pop("proxyid", None)
+        params.pop("proxy_groupid", None)
+    elif p_str.startswith("group_"):
+        params["monitored_by"] = 2
+        params["proxy_groupid"] = p_str.replace("group_", "")
+        params.pop("proxyid", None)
+    else:
+        params["monitored_by"] = 1
+        params["proxyid"] = p_str
+        params.pop("proxy_groupid", None)
+
+
 def execute_zabbix_host_save(api, is_update, params, proxy_id_str):
     """
-    Executes host.create or host.update with automatic schema version fallbacks.
+    Executes host.create or host.update with Zabbix 7.0 schema compliance and version fallbacks.
     """
+    apply_monitoring_mode(params, proxy_id_str)
     method = "host.update" if is_update else "host.create"
     res = api.call(method, params)
 
     if isinstance(res, dict) and "error" in res:
         err_msg = str(res["error"])
-        logger.warning(f"[Zabbix Signal API Warning] {method} primary payload failed: {err_msg}. Trying compatibility payload...")
+        logger.warning(f"[Zabbix Signal API Warning] {method} payload failed: {err_msg}. Retrying with legacy parameters...")
         
-        # Fallback 1: Strip monitored_by / proxy_groupid for older Zabbix versions
+        # Fallback for older Zabbix versions (Zabbix 6.0/6.4) where monitored_by is not used
         clean_params = dict(params)
         clean_params.pop("monitored_by", None)
         clean_params.pop("proxy_groupid", None)
         
-        if proxy_id_str and proxy_id_str != "0" and not proxy_id_str.startswith("group_"):
-            clean_params["proxyid"] = proxy_id_str
+        p_str = str(proxy_id_str or "0").strip()
+        if p_str != "0" and not p_str.startswith("group_"):
+            clean_params["proxyid"] = p_str
+            clean_params["proxy_hostid"] = p_str
         else:
-            clean_params["proxyid"] = "0"
-            
-        res = api.call(method, clean_params)
+            clean_params.pop("proxyid", None)
+            clean_params.pop("proxy_hostid", None)
 
-        if isinstance(res, dict) and "error" in res:
-            # Fallback 2: Try without proxyid parameter entirely if Zabbix server
-            if proxy_id_str == "0" or not proxy_id_str:
-                clean_params.pop("proxyid", None)
-                clean_params.pop("proxy_hostid", None)
-                res = api.call(method, clean_params)
+        res = api.call(method, clean_params)
 
     return res
 
@@ -337,17 +356,6 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
             if tmpl_payload:
                 upd_params["templates"] = tmpl_payload
 
-            if proxy_id == "0":
-                upd_params["monitored_by"] = 0
-                upd_params["proxyid"] = "0"
-            elif proxy_id.startswith("group_"):
-                upd_params["monitored_by"] = 2
-                upd_params["proxy_groupid"] = proxy_id.replace("group_", "")
-                upd_params["proxyid"] = "0"
-            else:
-                upd_params["monitored_by"] = 1
-                upd_params["proxyid"] = proxy_id
-
             res = execute_zabbix_host_save(api, True, upd_params, proxy_id)
             logger.info(f"[Zabbix Signal] Host '{device_name}' updated in Zabbix: {res}")
         else:
@@ -359,17 +367,6 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
             }
             if tmpl_payload:
                 create_params["templates"] = tmpl_payload
-
-            if proxy_id == "0":
-                create_params["monitored_by"] = 0
-                create_params["proxyid"] = "0"
-            elif proxy_id.startswith("group_"):
-                create_params["monitored_by"] = 2
-                create_params["proxy_groupid"] = proxy_id.replace("group_", "")
-                create_params["proxyid"] = "0"
-            else:
-                create_params["monitored_by"] = 1
-                create_params["proxyid"] = proxy_id
 
             res = execute_zabbix_host_save(api, False, create_params, proxy_id)
             logger.info(f"[Zabbix Signal] Host '{device_name}' created in Zabbix ({if_type_str}/{snmp_ver_name}): {res}")

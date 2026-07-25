@@ -52,15 +52,11 @@ class ZabbixAPI:
 
     def get_proxies(self):
         res = self.call("proxy.get", {
-            "output": ["proxyid", "name", "operating_mode", "state", "version", "lastaccess", "description"]
+            "output": ["proxyid", "name"]
         })
         if isinstance(res, dict) and "error" in res:
             res = self.call("proxy.get", {
-                "output": ["proxyid", "host", "status", "description"]
-            })
-        if isinstance(res, dict) and "error" in res:
-            res = self.call("proxy.get", {
-                "output": ["proxyid", "name"]
+                "output": ["proxyid", "host"]
             })
         return res
 
@@ -108,15 +104,13 @@ class ZabbixAPI:
         })
 
     def get_hosts(self):
-        # 1. Primary Zabbix 7.0 API query with selectInterfaces including details
         res = self.call("host.get", {
-            "output": ["hostid", "host", "name", "status", "proxyid"],
+            "output": ["hostid", "host", "name", "status", "proxyid", "monitored_by", "proxy_groupid"],
             "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
             "selectHostGroups": ["groupid", "name"],
             "selectMacros": ["macro", "value"]
         })
         if isinstance(res, dict) and "error" in res:
-            # Fallback 1: selectGroups for older Zabbix versions
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid"],
                 "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"],
@@ -124,13 +118,11 @@ class ZabbixAPI:
                 "selectMacros": ["macro", "value"]
             })
         if isinstance(res, dict) and "error" in res:
-            # Fallback 2: selectInterfaces with details without groups/macros
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status", "proxyid"],
                 "selectInterfaces": ["interfaceid", "type", "main", "useip", "ip", "dns", "port", "details"]
             })
         if isinstance(res, dict) and "error" in res:
-            # Fallback 3: selectInterfaces extend (Guaranteed to return details if supported)
             res = self.call("host.get", {
                 "output": ["hostid", "host", "name", "status"],
                 "selectInterfaces": "extend"
@@ -148,9 +140,9 @@ class ZabbixAPI:
                     if isinstance(t, dict):
                         tags_set.add((t.get("tag", ""), t.get("value", "")))
         if isinstance(templates, list):
-            for tm in templates:
-                for t in tm.get("tags", []):
+            for tmpl in templates:
+                for t in tmpl.get("tags", []):
                     if isinstance(t, dict):
                         tags_set.add((t.get("tag", ""), t.get("value", "")))
-                    
-        return [{"tag": t[0], "value": t[1]} for t in sorted(tags_set)]
+                        
+        return [{"tag": k, "value": v} for k, v in tags_set]
