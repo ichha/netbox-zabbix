@@ -26,7 +26,6 @@ def build_snmp_details(cf_data):
     priv_pass = str(cf_data.get('privacy_passphrase') or '').strip()
     context_name = str(cf_data.get('context_name') or '').strip()
 
-    # Prioritize SNMPv3 if security_name or security_level or auth_pass is present
     has_v3 = bool(sec_name or sec_level_raw or auth_pass)
 
     if has_v3:
@@ -67,7 +66,7 @@ def build_snmp_details(cf_data):
             "privpassphrase": priv_pass,
             "contextname": context_name
         }
-        return details, 2, "SNMPv3"  # Type 2 = SNMP
+        return details, 2, "SNMPv3"
     elif comm_str:
         details = {
             "version": 2,
@@ -143,7 +142,6 @@ def execute_zabbix_host_save(api, is_update, params, proxy_id_str):
         err_msg = str(res["error"])
         logger.warning(f"[Zabbix Signal API Warning] {method} payload failed: {err_msg}. Retrying with legacy parameters...")
         
-        # Fallback for older Zabbix versions (Zabbix 6.0/6.4) where monitored_by is not used
         clean_params = dict(params)
         clean_params.pop("monitored_by", None)
         clean_params.pop("proxy_groupid", None)
@@ -167,9 +165,6 @@ def execute_zabbix_host_save(api, is_update, params, proxy_id_str):
 
 @receiver(pre_save, sender=DeviceRole)
 def device_role_pre_save(sender, instance, **kwargs):
-    """
-    Capture existing role name before update to handle rename in Zabbix.
-    """
     if instance.pk:
         try:
             old_instance = DeviceRole.objects.get(pk=instance.pk)
@@ -180,9 +175,6 @@ def device_role_pre_save(sender, instance, **kwargs):
 
 @receiver(post_save, sender=DeviceRole)
 def sync_device_role_to_zabbix_on_save(sender, instance, created, **kwargs):
-    """
-    Automatically create or rename Zabbix Host Group when a NetBox DeviceRole is saved.
-    """
     api = ZabbixAPI()
     role_name = instance.name
 
@@ -215,9 +207,6 @@ def sync_device_role_to_zabbix_on_save(sender, instance, created, **kwargs):
 
 @receiver(post_delete, sender=DeviceRole)
 def sync_device_role_to_zabbix_on_delete(sender, instance, **kwargs):
-    """
-    Automatically delete Zabbix Host Group when a NetBox DeviceRole is deleted.
-    """
     api = ZabbixAPI()
     role_name = instance.name
     logger.info(f"[Zabbix Signal] NetBox DeviceRole deleted: '{role_name}'. Deleting Host Group from Zabbix...")
@@ -240,10 +229,6 @@ def sync_device_role_to_zabbix_on_delete(sender, instance, **kwargs):
 
 @receiver(post_save, sender=Device)
 def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
-    """
-    Automatically create or update Zabbix Host when a NetBox Device is created or updated.
-    Supports Agent, SNMP, IPMI, JMX interfaces and Server / Proxy / Proxy Group monitoring modes.
-    """
     nb_ip = None
     if instance.primary_ip4:
         nb_ip = str(instance.primary_ip4.address).split('/')[0]
@@ -307,20 +292,23 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
 
         interfaces_list = [if_payload]
 
-        # If Agent mode, but SNMP community / v3 credentials exist, add SNMP interface as secondary
+        # If Agent mode, but SNMP community exists OR templates are attached, add SNMP interface as secondary
         # so SNMP templates linked to the host will not throw Zabbix API interface errors
-        if if_type_str == "Agent" and (cf_data.get('snmp_community') or cf_data.get('security_name') or cf_data.get('security_level')):
-            snmp_details, _, _ = build_snmp_details(cf_data)
-            snmp_if_payload = {
-                "type": 2,
-                "main": 1,
-                "useip": 1,
-                "ip": nb_ip,
-                "dns": "",
-                "port": "161",
-                "details": snmp_details
-            }
-            interfaces_list.append(snmp_if_payload)
+        if if_type_str == "Agent":
+            has_snmp_cf = bool(cf_data.get('snmp_community') or cf_data.get('security_name') or cf_data.get('security_level'))
+            has_templates = bool(tmpl_payload)
+            if has_snmp_cf or has_templates:
+                snmp_details, _, _ = build_snmp_details(cf_data)
+                snmp_if_payload = {
+                    "type": 2,
+                    "main": 1,
+                    "useip": 1,
+                    "ip": nb_ip,
+                    "dns": "",
+                    "port": "161",
+                    "details": snmp_details
+                }
+                interfaces_list.append(snmp_if_payload)
 
         # 4. Monitored By (Server / Proxy / Proxy Group)
         proxy_id = str(settings.get("proxy_id") or "0")
@@ -377,9 +365,6 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
 
 @receiver(post_delete, sender=Device)
 def sync_device_to_zabbix_on_delete(sender, instance, **kwargs):
-    """
-    Automatically delete Zabbix Host when a NetBox Device is deleted.
-    """
     api = ZabbixAPI()
     device_name = instance.name
     if not device_name:
