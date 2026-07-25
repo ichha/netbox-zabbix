@@ -406,26 +406,40 @@
                                     {% elif cell.type == "mapped_settings" or cell.type == "mapped_templates" %}
                                         <div class="d-flex align-items-center justify-content-between gap-2">
                                             <div class="d-flex flex-column gap-1 align-items-start my-1">
-                                                {% if cell.has_settings %}
-                                                    <!-- Interface Type, Proxy Badges & Clear Button -->
+                                                {% if cell.has_settings or cell.templates or cell.interface_type or cell.proxy_name %}
+                                                    <!-- Interface Type & Proxy Badges (Individually Removable) -->
                                                     <div class="d-flex flex-wrap gap-1 align-items-center mb-1">
-                                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold" style="font-size: 0.75rem;">
-                                                            <i class="mdi mdi-lan me-1"></i>Type: {{ cell.interface_type|default:"SNMP" }}
-                                                        </span>
-                                                        <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle fw-semibold" style="font-size: 0.75rem;">
-                                                            <i class="mdi mdi-server-network me-1"></i>{{ cell.proxy_name|default:"Server" }}
-                                                        </span>
-                                                        <form action="{% url 'plugins:netbox_zabbix:clear_settings' %}" method="post" class="d-inline m-0 p-0 ms-1">
-                                                            {% csrf_token %}
-                                                            <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
-                                                            <button type="submit" class="btn btn-sm p-0 text-danger border-0 opacity-75 hover-opacity-100" style="line-height: 1; font-size: 0.85rem;" title="Clear Zabbix Settings for {{ cell.role_name }}">
-                                                                <i class="mdi mdi-close-circle-outline"></i>
-                                                            </button>
-                                                        </form>
+                                                        {% if cell.interface_type %}
+                                                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold d-inline-flex align-items-center gap-1" style="font-size: 0.75rem;">
+                                                                <i class="mdi mdi-lan me-1"></i>Type: {{ cell.interface_type }}
+                                                                <form action="{% url 'plugins:netbox_zabbix:remove_setting_field' %}" method="post" class="d-inline m-0 p-0 ms-1">
+                                                                    {% csrf_token %}
+                                                                    <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
+                                                                    <input type="hidden" name="field_name" value="interface_type" />
+                                                                    <button type="submit" class="btn p-0 border-0 text-muted opacity-75 hover-opacity-100" style="line-height: 1; font-size: 0.75rem;" title="Remove Interface Type setting">
+                                                                        &times;
+                                                                    </button>
+                                                                </form>
+                                                            </span>
+                                                        {% endif %}
+
+                                                        {% if cell.proxy_name %}
+                                                            <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle fw-semibold d-inline-flex align-items-center gap-1" style="font-size: 0.75rem;">
+                                                                <i class="mdi mdi-server-network me-1"></i>{{ cell.proxy_name }}
+                                                                <form action="{% url 'plugins:netbox_zabbix:remove_setting_field' %}" method="post" class="d-inline m-0 p-0 ms-1">
+                                                                    {% csrf_token %}
+                                                                    <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
+                                                                    <input type="hidden" name="field_name" value="proxy" />
+                                                                    <button type="submit" class="btn p-0 border-0 text-muted opacity-75 hover-opacity-100" style="line-height: 1; font-size: 0.75rem;" title="Remove Monitored By setting">
+                                                                        &times;
+                                                                    </button>
+                                                                </form>
+                                                            </span>
+                                                        {% endif %}
                                                     </div>
                                                 {% endif %}
 
-                                                <!-- Templates Badges -->
+                                                <!-- Templates Badges (Individually Removable) -->
                                                 {% if cell.templates %}
                                                     {% for t in cell.templates %}
                                                         <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm" style="font-size: 0.82rem; padding: 4px 10px; border-radius: 4px;">
@@ -440,7 +454,7 @@
                                                             </form>
                                                         </span>
                                                     {% endfor %}
-                                                {% elif not cell.has_settings %}
+                                                {% elif not cell.interface_type and not cell.proxy_name %}
                                                     <span class="text-muted small">&mdash; No Settings &mdash;</span>
                                                 {% endif %}
                                             </div>
@@ -497,7 +511,7 @@
                                                                         <label class="form-label fw-bold fs-7 text-dark mb-1">Monitored By (Server / Proxy):</label>
                                                                         <select name="proxy_id" class="form-select form-select-sm">
                                                                             {% for px in all_proxies %}
-                                                                                <option value="{{ px.proxyid }}" {% if px.proxyid == cell.proxy_id %}selected{% endif %}>
+                                                                                <option value="{{ px.proxyid }}" {% if px.proxyid == cell.proxy_id or not cell.proxy_id and px.proxyid == "0" %}selected{% endif %}>
                                                                                     {{ px.name }}
                                                                                 </option>
                                                                             {% endfor %}
@@ -506,9 +520,9 @@
                                                                 </div>
                                                             </div>
                                                             <div class="modal-footer py-2 d-flex justify-content-between align-items-center">
-                                                                {% if cell.has_settings %}
+                                                                {% if cell.has_settings or cell.interface_type or cell.proxy_name or cell.templates %}
                                                                     <button type="submit" class="btn btn-outline-danger btn-sm fw-bold" repr="clear" name="clear_settings" value="1" onclick="this.form.action='{% url 'plugins:netbox_zabbix:clear_settings' %}';">
-                                                                        <i class="mdi mdi-trash-can-outline me-1"></i> Clear Settings
+                                                                        <i class="mdi mdi-trash-can-outline me-1"></i> Clear All Settings
                                                                     </button>
                                                                 {% else %}
                                                                     <div></div>

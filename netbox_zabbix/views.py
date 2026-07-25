@@ -5,7 +5,13 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 import logging
 from .zabbix_api import ZabbixAPI
-from .template_storage import get_mapped_templates, get_role_zabbix_settings, save_mapped_templates, remove_role_zabbix_settings
+from .template_storage import (
+    get_mapped_templates, 
+    get_role_zabbix_settings, 
+    save_mapped_templates, 
+    remove_role_zabbix_settings,
+    remove_role_setting_field
+)
 
 logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
@@ -139,7 +145,7 @@ class ZabbixProxiesView(View):
         items = []
         if isinstance(proxies, list):
             for p in proxies:
-                proxy_id = p.get("proxyid", "-")
+                proxy_id = str(p.get("proxyid") or p.get("id") or "-")
                 name = p.get("name") or p.get("host") or f"Proxy {proxy_id}"
 
                 op_mode = p.get("operating_mode")
@@ -314,7 +320,7 @@ class ZabbixHostGroupsView(View):
         all_proxies_list = [{"proxyid": "0", "name": "Server (Direct Connection)"}]
         if isinstance(zabbix_proxies, list):
             for px in zabbix_proxies:
-                p_id = str(px.get("proxyid", ""))
+                p_id = str(px.get("proxyid") or px.get("id") or "")
                 p_name = px.get("name") or px.get("host") or f"Proxy {p_id}"
                 if p_id:
                     all_proxies_list.append({"proxyid": p_id, "name": f"Proxy: {p_name}"})
@@ -351,9 +357,9 @@ class ZabbixHostGroupsView(View):
                 "has_settings": settings.get("has_settings", False),
                 "templates": settings.get("templates", []),
                 "template_ids": [str(t["id"]) for t in settings.get("templates", [])],
-                "interface_type": settings.get("interface_type") or "SNMP",
-                "proxy_id": str(settings.get("proxy_id") or "0"),
-                "proxy_name": settings.get("proxy_name") or "Server"
+                "interface_type": settings.get("interface_type"),
+                "proxy_id": str(settings.get("proxy_id")) if settings.get("proxy_id") is not None else None,
+                "proxy_name": settings.get("proxy_name")
             }
 
             if r_lower in zabbix_group_map:
@@ -391,9 +397,9 @@ class ZabbixHostGroupsView(View):
                         "has_settings": settings.get("has_settings", False),
                         "templates": settings.get("templates", []),
                         "template_ids": [str(t["id"]) for t in settings.get("templates", [])],
-                        "interface_type": settings.get("interface_type") or "SNMP",
-                        "proxy_id": str(settings.get("proxy_id") or "0"),
-                        "proxy_name": settings.get("proxy_name") or "Server"
+                        "interface_type": settings.get("interface_type"),
+                        "proxy_id": str(settings.get("proxy_id")) if settings.get("proxy_id") is not None else None,
+                        "proxy_name": settings.get("proxy_name")
                     }
                     items.append([
                         g.get("groupid", "-"),
@@ -438,13 +444,17 @@ class ZabbixMapTemplatesView(View):
 
         template_names = [tmpl_lookup.get(str(tid), f"Template {tid}") for tid in template_ids]
 
-        proxy_name = "Server"
+        proxy_name = "Server" if proxy_id == "0" else None
         if proxy_id != "0" and isinstance(z_proxies, list):
             for px in z_proxies:
-                if str(px.get("proxyid", "")) == proxy_id:
-                    p_name = px.get('name') or px.get('host')
+                px_id = str(px.get("proxyid") or px.get("id") or "")
+                if px_id == proxy_id:
+                    p_name = px.get('name') or px.get('host') or f"Proxy {proxy_id}"
                     proxy_name = f"Proxy: {p_name}"
                     break
+
+        if proxy_id != "0" and not proxy_name:
+            proxy_name = f"Proxy (ID {proxy_id})"
 
         save_mapped_templates(role_name, template_ids, template_names, interface_type, proxy_id, proxy_name)
 
@@ -461,6 +471,19 @@ class ZabbixClearSettingsView(View):
 
         remove_role_zabbix_settings(role_name)
         messages.success(request, f"Successfully cleared Zabbix Settings for '{role_name}'.")
+        return redirect('plugins:netbox_zabbix:hostgroups')
+
+
+class ZabbixRemoveSettingFieldView(View):
+    def post(self, request):
+        role_name = request.POST.get('role_name')
+        field_name = request.POST.get('field_name')
+        if not role_name or not field_name:
+            messages.error(request, "Missing Role name or field name.")
+            return redirect('plugins:netbox_zabbix:hostgroups')
+
+        remove_role_setting_field(role_name, field_name)
+        messages.success(request, f"Removed {field_name.replace('_', ' ').capitalize()} setting for '{role_name}'.")
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
@@ -482,9 +505,9 @@ class ZabbixRemoveTemplateView(View):
         
         save_mapped_templates(
             role_name, new_ids, new_names, 
-            settings.get("interface_type", "SNMP"), 
-            settings.get("proxy_id", "0"), 
-            settings.get("proxy_name", "Server")
+            settings.get("interface_type"), 
+            settings.get("proxy_id"), 
+            settings.get("proxy_name")
         )
         messages.success(request, f"Removed template from '{role_name}'.")
         return redirect('plugins:netbox_zabbix:hostgroups')
@@ -547,7 +570,7 @@ class ZabbixHostsView(View):
             proxies = api.get_proxies()
             if isinstance(proxies, list):
                 for p in proxies:
-                    p_id = str(p.get("proxyid", ""))
+                    p_id = str(p.get("proxyid") or p.get("id") or "")
                     p_name = p.get("name") or p.get("host")
                     if p_id and p_name:
                         proxy_map[p_id] = p_name
