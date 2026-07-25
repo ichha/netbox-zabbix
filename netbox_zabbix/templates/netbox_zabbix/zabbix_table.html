@@ -161,12 +161,12 @@
                             <td class="align-middle fw-bold text-primary fs-6">{{ item.netbox_name }}</td>
                             <td class="align-middle"><code class="fw-bold fs-7">{{ item.netbox_ip }}</code></td>
                             <td class="align-middle">
-                                <span class="badge bg-success-subtle text-success border border-success-subtle fw-semibold px-2 py-1" style="font-size: 0.78rem;">
+                                <span class="badge fw-semibold px-2 py-1" style="font-size:0.8rem; background:#198754; color:#fff; border-radius:5px;">
                                     <i class="mdi mdi-check-circle-outline me-1"></i>{{ item.netbox_status }}
                                 </span>
                             </td>
                             <td class="align-middle">
-                                <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle fw-semibold" style="font-size: 0.78rem;">
+                                <span class="badge fw-semibold" style="font-size:0.8rem; background:#0d6efd; color:#fff; border-radius:5px; padding:3px 8px;">
                                     {{ item.netbox_role }}
                                 </span>
                             </td>
@@ -250,34 +250,20 @@
                             </td>
 
                             <!-- MATCH STATUS & ACTION: COMBINED ACROSS 2 ROWS -->
-                            <td rowspan="2" class="align-middle text-end border-start bg-body-tertiary">
+                            <td rowspan="2" class="align-middle text-end border-start" style="background:#f0f4ff;">
                                 <div class="d-flex flex-column align-items-end gap-2 p-1">
                                     {% if item.match_status == "matched" %}
-                                        <span class="badge bg-success-subtle text-success border border-success-subtle fw-bold w-100 p-2" style="font-size: 0.8rem;">
+                                        <span class="badge fw-bold w-100 p-2" style="font-size: 0.82rem; background:#198754; color:#fff; border-radius:6px;">
                                             <i class="mdi mdi-check-circle me-1"></i> Matched
                                         </span>
-                                        {% if item.role_synced %}
-                                            <span class="badge bg-success-subtle text-success border border-success-subtle fw-bold w-100 py-1" style="font-size: 0.78rem;">
-                                                <i class="mdi mdi-check-all me-1"></i> Synced
-                                            </span>
-                                        {% else %}
-                                            <form action="{% url 'plugins:netbox_zabbix:sync_role' %}" method="post" class="w-100">
-                                                {% csrf_token %}
-                                                <input type="hidden" name="host_id" value="{{ item.zabbix_hostid }}" />
-                                                <input type="hidden" name="role_name" value="{{ item.netbox_role }}" />
-                                                <button type="submit" class="btn btn-sm btn-outline-primary fw-bold w-100 py-1" style="font-size: 0.78rem;" title="Sync Role to Zabbix Host Group">
-                                                    <i class="mdi mdi-cloud-upload me-1"></i> Sync Role
-                                                </button>
-                                            </form>
-                                        {% endif %}
                                     {% else %}
-                                        <span class="badge bg-danger-subtle text-danger border border-danger-subtle fw-bold w-100 p-2" style="font-size: 0.8rem;">
+                                        <span class="badge fw-bold w-100 p-2" style="font-size: 0.82rem; background:#dc3545; color:#fff; border-radius:6px;">
                                             <i class="mdi mdi-close-circle me-1"></i> Not in Zabbix
                                         </span>
                                         <form action="{% url 'plugins:netbox_zabbix:push_device' %}" method="post" class="w-100">
                                             {% csrf_token %}
                                             <input type="hidden" name="device_name" value="{{ item.netbox_name }}" />
-                                            <button type="submit" class="btn btn-sm btn-success fw-bold text-white w-100 py-1" style="font-size: 0.78rem;" title="Push Device from NetBox to Zabbix">
+                                            <button type="submit" class="btn btn-sm fw-bold text-white w-100 py-1" style="font-size: 0.82rem; background:#0d6efd; border:none; border-radius:6px; box-shadow:0 2px 6px rgba(13,110,253,0.35);" title="Push Device from NetBox to Zabbix">
                                                 <i class="mdi mdi-cloud-upload me-1"></i> Push to Zabbix
                                             </button>
                                         </form>
@@ -304,11 +290,11 @@
                             <td class="align-middle">
                                 {% if item.zabbix_exists %}
                                     {% if item.zabbix_status == "Monitored" %}
-                                        <span class="badge bg-success-subtle text-success border border-success-subtle fw-semibold px-2 py-1" style="font-size: 0.78rem;">
+                                        <span class="badge fw-semibold px-2 py-1" style="font-size:0.8rem; background:#198754; color:#fff; border-radius:5px;">
                                             <i class="mdi mdi-check-circle-outline me-1"></i> Monitored
                                         </span>
                                     {% else %}
-                                        <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle fw-semibold px-2 py-1" style="font-size: 0.78rem;">Disabled</span>
+                                        <span class="badge fw-semibold px-2 py-1" style="font-size:0.8rem; background:#6c757d; color:#fff; border-radius:5px;">Disabled</span>
                                     {% endif %}
                                 {% else %}
                                     <span class="text-muted small">&mdash;</span>
