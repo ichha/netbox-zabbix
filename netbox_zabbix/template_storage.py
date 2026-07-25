@@ -48,13 +48,13 @@ def get_role_zabbix_settings(role_name):
                         pxid = entry.get('proxy_id')
                         pxname = entry.get('proxy_name')
 
-                        has_st = entry.get('has_settings', True) and (bool(tmpls) or bool(itype) or pxid is not None)
+                        has_st = bool(tmpls) or bool(itype) or pxid is not None
                         return {
                             'has_settings': has_st,
                             'templates': tmpls,
-                            'interface_type': itype,
-                            'proxy_id': str(pxid) if pxid is not None else None,
-                            'proxy_name': pxname
+                            'interface_type': itype if itype else None,
+                            'proxy_id': str(pxid) if pxid is not None and str(pxid) != "" else None,
+                            'proxy_name': pxname if pxname else None
                         }
                     elif isinstance(entry, list):
                         default_res['templates'] = entry
@@ -63,37 +63,49 @@ def get_role_zabbix_settings(role_name):
     except Exception as e:
         logger.error(f"JSON file lookup failed: {e}")
 
-    # 2. Try DB model fallback for legacy templates
+    # 2. Try DB model fallback
     try:
         from .models import ZabbixHostGroupTemplate
         obj = ZabbixHostGroupTemplate.objects.filter(role_name=role_name).first()
-        if obj and isinstance(obj.template_ids, list) and len(obj.template_ids) > 0:
+        if obj:
             res = []
-            ids = obj.template_ids
+            ids = obj.template_ids if isinstance(obj.template_ids, list) else []
             names = obj.template_names if isinstance(obj.template_names, list) else []
             for i, tid in enumerate(ids):
                 tname = names[i] if i < len(names) else f"Template {tid}"
                 res.append({"id": str(tid), "name": tname})
-            default_res['templates'] = res
-            default_res['has_settings'] = True
-            default_res['interface_type'] = 'SNMP'
-            default_res['proxy_id'] = '0'
-            default_res['proxy_name'] = 'Server'
-            return default_res
+            
+            itype = obj.interface_type if obj.interface_type else None
+            pxid = str(obj.proxy_id) if obj.proxy_id is not None and str(obj.proxy_id) != "" else None
+            pxname = obj.proxy_name if obj.proxy_name else None
+
+            has_st = bool(res) or bool(itype) or pxid is not None
+
+            return {
+                'has_settings': has_st,
+                'templates': res,
+                'interface_type': itype,
+                'proxy_id': pxid,
+                'proxy_name': pxname
+            }
     except Exception as e:
-        logger.debug(f"DB lookup for template mapping failed: {e}")
+        logger.debug(f"DB lookup for ZabbixHostGroupTemplate failed: {e}")
 
     return default_res
 
 
-def save_mapped_templates(role_name, template_ids, template_names, interface_type='SNMP', proxy_id='0', proxy_name='Server'):
+def save_mapped_templates(role_name, template_ids, template_names, interface_type=None, proxy_id=None, proxy_name=None):
     """
-    Save complete Zabbix settings (Templates, Interface Type, Proxy) for role_name.
+    Save Zabbix settings (Templates, Interface Type, Proxy) for role_name.
     """
     formatted_templates = [
         {"id": str(tid), "name": template_names[i] if i < len(template_names) else f"Template {tid}"}
         for i, tid in enumerate(template_ids)
     ]
+
+    valid_itype = interface_type if interface_type in ['SNMP', 'Agent', 'JMX', 'IPMI'] else None
+    valid_pxid = str(proxy_id) if proxy_id is not None and str(proxy_id) != "" else None
+    valid_pxname = proxy_name if proxy_name else None
 
     # 1. Save to JSON file
     try:
@@ -108,9 +120,9 @@ def save_mapped_templates(role_name, template_ids, template_names, interface_typ
         data[role_name] = {
             'has_settings': True,
             'templates': formatted_templates,
-            'interface_type': interface_type if interface_type in ['SNMP', 'Agent', 'JMX', 'IPMI'] else None,
-            'proxy_id': str(proxy_id) if proxy_id is not None and str(proxy_id) != "" else None,
-            'proxy_name': proxy_name if proxy_name else None
+            'interface_type': valid_itype,
+            'proxy_id': valid_pxid,
+            'proxy_name': valid_pxname
         }
 
         with open(MAPPING_FILE, 'w') as f:
@@ -118,12 +130,15 @@ def save_mapped_templates(role_name, template_ids, template_names, interface_typ
     except Exception as e:
         logger.error(f"JSON file save failed: {e}")
 
-    # 2. Save legacy templates DB model
+    # 2. Save to DB model
     try:
         from .models import ZabbixHostGroupTemplate
         obj, _ = ZabbixHostGroupTemplate.objects.get_or_create(role_name=role_name)
         obj.template_ids = [str(t) for t in template_ids]
         obj.template_names = template_names
+        obj.interface_type = valid_itype
+        obj.proxy_id = valid_pxid
+        obj.proxy_name = valid_pxname
         obj.save()
     except Exception as e:
         logger.debug(f"DB save for template mapping failed: {e}")
@@ -133,6 +148,7 @@ def remove_role_setting_field(role_name, field_name):
     """
     Remove specific field setting ('interface_type' or 'proxy') for role_name.
     """
+    # 1. JSON file update
     try:
         if os.path.exists(MAPPING_FILE):
             with open(MAPPING_FILE, 'r') as f:
@@ -146,10 +162,10 @@ def remove_role_setting_field(role_name, field_name):
                     entry['proxy_id'] = None
                     entry['proxy_name'] = None
 
-                # Check if all settings are empty
                 tmpls = entry.get('templates', [])
                 itype = entry.get('interface_type')
                 pxid = entry.get('proxy_id')
+
                 if not tmpls and not itype and pxid is None:
                     del data[role_name]
                 else:
@@ -158,7 +174,25 @@ def remove_role_setting_field(role_name, field_name):
                 with open(MAPPING_FILE, 'w') as f:
                     json.dump(data, f, indent=2)
     except Exception as e:
-        logger.error(f"Failed to remove setting field '{field_name}' for '{role_name}': {e}")
+        logger.error(f"Failed to remove setting field '{field_name}' in JSON for '{role_name}': {e}")
+
+    # 2. DB model update
+    try:
+        from .models import ZabbixHostGroupTemplate
+        obj = ZabbixHostGroupTemplate.objects.filter(role_name=role_name).first()
+        if obj:
+            if field_name == 'interface_type':
+                obj.interface_type = None
+            elif field_name in ['proxy', 'proxy_id', 'proxy_name']:
+                obj.proxy_id = None
+                obj.proxy_name = None
+
+            if not obj.template_ids and not obj.interface_type and obj.proxy_id is None:
+                obj.delete()
+            else:
+                obj.save()
+    except Exception as e:
+        logger.debug(f"Failed to remove setting field '{field_name}' in DB for '{role_name}': {e}")
 
 
 def remove_role_zabbix_settings(role_name):
@@ -177,7 +211,7 @@ def remove_role_zabbix_settings(role_name):
     except Exception as e:
         logger.error(f"JSON file remove failed: {e}")
 
-    # 2. Remove from DB model if present
+    # 2. Remove from DB model
     try:
         from .models import ZabbixHostGroupTemplate
         ZabbixHostGroupTemplate.objects.filter(role_name=role_name).delete()

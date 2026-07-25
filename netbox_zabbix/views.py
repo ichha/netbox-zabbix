@@ -339,7 +339,6 @@ class ZabbixHostGroupsView(View):
         except Exception as e:
             logger.error(f"Error fetching NetBox DeviceRoles: {e}")
 
-        # Update Header: Change "Mapped Templates" to "Zabbix Settings"
         headers = ["Group ID", "Zabbix Host Group Name", "NetBox Device Role", "Zabbix Settings", "Sync Status"]
         items = []
         processed_zabbix_lower = set()
@@ -423,8 +422,8 @@ class ZabbixMapTemplatesView(View):
     def post(self, request):
         role_name = request.POST.get('role_name')
         template_ids = request.POST.getlist('template_ids')
-        interface_type = request.POST.get('interface_type', 'SNMP')
-        proxy_id = str(request.POST.get('proxy_id', '0'))
+        interface_type = request.POST.get('interface_type', '').strip()
+        proxy_id = str(request.POST.get('proxy_id', '')).strip()
         
         if not role_name:
             messages.error(request, "Missing Role/Hostgroup name.")
@@ -444,21 +443,22 @@ class ZabbixMapTemplatesView(View):
 
         template_names = [tmpl_lookup.get(str(tid), f"Template {tid}") for tid in template_ids]
 
-        proxy_name = "Server" if proxy_id == "0" else None
-        if proxy_id != "0" and isinstance(z_proxies, list):
+        proxy_name = None
+        if proxy_id == "0":
+            proxy_name = "Server"
+        elif proxy_id != "" and isinstance(z_proxies, list):
             for px in z_proxies:
                 px_id = str(px.get("proxyid") or px.get("id") or "")
                 if px_id == proxy_id:
                     p_name = px.get('name') or px.get('host') or f"Proxy {proxy_id}"
                     proxy_name = f"Proxy: {p_name}"
                     break
-
-        if proxy_id != "0" and not proxy_name:
-            proxy_name = f"Proxy (ID {proxy_id})"
+            if not proxy_name and proxy_id != "":
+                proxy_name = f"Proxy (ID {proxy_id})"
 
         save_mapped_templates(role_name, template_ids, template_names, interface_type, proxy_id, proxy_name)
 
-        messages.success(request, f"Successfully saved Zabbix Settings for '{role_name}' (Templates: {len(template_ids)}, Type: {interface_type}, Bound to: {proxy_name})!")
+        messages.success(request, f"Successfully saved Zabbix Settings for '{role_name}'!")
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
@@ -470,7 +470,7 @@ class ZabbixClearSettingsView(View):
             return redirect('plugins:netbox_zabbix:hostgroups')
 
         remove_role_zabbix_settings(role_name)
-        messages.success(request, f"Successfully cleared Zabbix Settings for '{role_name}'.")
+        messages.success(request, f"Successfully cleared all Zabbix Settings for '{role_name}'.")
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
@@ -543,7 +543,7 @@ class ZabbixHostsView(View):
     def get(self, request):
         api = ZabbixAPI()
         
-        # 1. NetBox Devices with Primary IP assigned (Source of Truth)
+        # 1. NetBox Devices with Primary IP assigned
         from dcim.models import Device
 
         qs = Device.objects.filter(
@@ -589,7 +589,7 @@ class ZabbixHostsView(View):
         except Exception:
             pass
 
-        host_template_map = {} # hostid -> list of template names
+        host_template_map = {}
         try:
             raw_tmpl_hosts = api.get_templates_with_hosts()
             if isinstance(raw_tmpl_hosts, list):
@@ -609,8 +609,8 @@ class ZabbixHostsView(View):
         except Exception as e:
             logger.error(f"Error fetching templates with hosts: {e}")
 
-        zabbix_name_map = {} # Lowercase Name/Host -> List of Zabbix host objects
-        zabbix_ip_map = {}   # IP Address -> List of Zabbix host objects
+        zabbix_name_map = {}
+        zabbix_ip_map = {}
         
         if isinstance(zabbix_hosts, list):
             for zh in zabbix_hosts:
@@ -643,7 +643,6 @@ class ZabbixHostsView(View):
 
         total_devices = qs.count()
 
-        # Fast match check helper
         def is_dev_matched(dev):
             dev_n = (dev.name or "").strip().lower()
             dev_ip = ""
@@ -653,7 +652,6 @@ class ZabbixHostsView(View):
                 dev_ip = str(dev.primary_ip6.address).split('/')[0]
             return (dev_n in zabbix_names_set) or (dev_ip and dev_ip in zabbix_ips_set)
 
-        # 3. Filter by status if card clicked
         status_filter = request.GET.get('status', '').strip().lower()
 
         all_devices_list = list(qs.iterator())
@@ -673,7 +671,6 @@ class ZabbixHostsView(View):
 
         filtered_count = len(filtered_devs)
 
-        # 4. Pagination (slice to active page ONLY)
         per_page_param = request.GET.get('per_page', '50')
         page_param = request.GET.get('page', '1')
 
@@ -695,7 +692,6 @@ class ZabbixHostsView(View):
         end_idx = start_idx + per_page
         page_slice = filtered_devs[start_idx:end_idx]
 
-        # 5. Build 2-Row Comparison Block ONLY for the active page slice (50 items)
         page_blocks = []
 
         for dev in page_slice:
@@ -715,7 +711,6 @@ class ZabbixHostsView(View):
 
             matching_zabbix_host = None
 
-            # Priority 1: Exact Name & IP match
             for zh in zh_name_candidates:
                 zh_interfaces = zh.get("interfaces", [])
                 if isinstance(zh_interfaces, list):
@@ -726,7 +721,6 @@ class ZabbixHostsView(View):
                 if matching_zabbix_host:
                     break
 
-            # Priority 2: Name match inside IP candidates
             if not matching_zabbix_host:
                 for zh in zh_ip_candidates:
                     c_tech = (zh.get("host") or "").strip().lower()
@@ -735,11 +729,9 @@ class ZabbixHostsView(View):
                         matching_zabbix_host = zh
                         break
 
-            # Priority 3: Match by Name alone
             if not matching_zabbix_host and len(zh_name_candidates) > 0:
                 matching_zabbix_host = zh_name_candidates[0]
 
-            # Priority 4: Match by IP alone
             if not matching_zabbix_host and len(zh_ip_candidates) > 0:
                 matching_zabbix_host = zh_ip_candidates[0]
 
@@ -787,7 +779,6 @@ class ZabbixHostsView(View):
                 z_st = str(zh_target.get("status", "0"))
                 item["zabbix_status"] = "Monitored" if z_st == "0" else "Disabled"
 
-                # Attached templates extraction with fallback to host_template_map
                 all_t_objs = []
                 for k in ["parentTemplates", "templates", "inheritedTemplates"]:
                     t_list = zh_target.get(k)
@@ -803,7 +794,6 @@ class ZabbixHostsView(View):
                             seen_t.add(t_n)
                             template_names.append(t_n)
 
-                # Merge from template.get mapping if hostid in map
                 if zh_hid and zh_hid in host_template_map:
                     for t_n in host_template_map[zh_hid]:
                         if t_n not in seen_t:
@@ -812,11 +802,9 @@ class ZabbixHostsView(View):
 
                 item["zabbix_templates"] = template_names
 
-                # Host groups
                 z_groups = zh_target.get("hostgroups", []) or zh_target.get("groups", [])
                 item["zabbix_hostgroups"] = [g.get("name") for g in z_groups if isinstance(g, dict) and g.get("name")]
 
-                # Build merged macros for this host
                 host_macro_map = dict(global_macros)
                 host_macros_list = zh_target.get("macros", [])
                 if isinstance(host_macros_list, list):
@@ -827,7 +815,6 @@ class ZabbixHostsView(View):
                             if m_k:
                                 host_macro_map[m_k] = m_v
 
-                # Interfaces & Complete SNMP details
                 interfaces = zh_target.get("interfaces", [])
                 if isinstance(interfaces, list) and len(interfaces) > 0:
                     main_iface = interfaces[0]
@@ -847,7 +834,6 @@ class ZabbixHostsView(View):
                     if not isinstance(details, dict):
                         details = {}
 
-                    # Extract version
                     ver = str(details.get("version") or main_iface.get("version") or ("2" if t_val == "2" else ""))
 
                     if t_val == "2" or ver in ["1", "2", "3", "2c"]:
@@ -860,7 +846,6 @@ class ZabbixHostsView(View):
                         elif t_val == "2":
                             item["snmp_version"] = "SNMPv2c"
 
-                        # Extract Community string (v1/v2c)
                         raw_comm = None
                         if isinstance(details, dict):
                             raw_comm = details.get("community")
@@ -876,7 +861,6 @@ class ZabbixHostsView(View):
                         elif "{$SNMP_COMMUNITY}" in host_macro_map:
                             item["snmp_community"] = host_macro_map["{$SNMP_COMMUNITY}"]
 
-                        # Comprehensive SNMPv3 fields extraction
                         if ver == "3":
                             item["snmpv3_context"] = details.get("contextname") or main_iface.get("contextname") or "—"
                             item["snmpv3_secname"] = details.get("securityname") or main_iface.get("securityname") or "—"
@@ -923,14 +907,12 @@ class ZabbixHostsView(View):
 
             page_blocks.append(item)
 
-        # 6. Pagination object construction
         paginator = Paginator(filtered_devs, per_page if per_page > 0 else 50)
         try:
             page_obj = paginator.page(page_num)
         except Exception:
             page_obj = paginator.page(1)
 
-        # Override page_obj.object_list with the 50 processed detail blocks
         page_obj.object_list = page_blocks
 
         headers = [
@@ -988,7 +970,6 @@ class ZabbixPushDeviceView(View):
 
         api = ZabbixAPI()
 
-        # 1. Host group ID
         hostgroup_id = None
         if role_name:
             groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
@@ -1006,12 +987,10 @@ class ZabbixPushDeviceView(View):
             else:
                 hostgroup_id = "2"
 
-        # 2. Retrieve configured Zabbix Settings for this Role
         settings = get_role_zabbix_settings(role_name) if role_name else {}
         mapped_tmpls = settings.get("templates", [])
         tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
 
-        # Determine Interface Type (SNMP=2, Agent=1, IPMI=3, JMX=4)
         if_type_str = settings.get("interface_type") or "SNMP"
         if_type_num = 2 if if_type_str == 'SNMP' else 1 if if_type_str == 'Agent' else 3 if if_type_str == 'IPMI' else 4 if if_type_str == 'JMX' else 2
         port_num = "161" if if_type_num == 2 else "10050" if if_type_num == 1 else "623" if if_type_num == 3 else "12345"
@@ -1024,7 +1003,7 @@ class ZabbixPushDeviceView(View):
             "dns": "",
             "port": port_num
         }
-        if if_type_num == 2:  # SNMP details
+        if if_type_num == 2:
             if_payload["details"] = {
                 "version": 2,
                 "community": "{$SNMP_COMMUNITY}",
@@ -1034,7 +1013,6 @@ class ZabbixPushDeviceView(View):
 
         proxy_id = str(settings.get("proxy_id") or "0")
 
-        # 3. Check if host already exists in Zabbix
         existing = api.call("host.get", {"filter": {"host": device_name}})
         if not (isinstance(existing, list) and len(existing) > 0):
             existing = api.call("host.get", {"filter": {"name": device_name}})
