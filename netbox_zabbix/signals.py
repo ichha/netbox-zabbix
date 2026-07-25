@@ -162,7 +162,7 @@ def sync_device_role_to_zabbix_on_delete(sender, instance, **kwargs):
 def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
     """
     Automatically create or update Zabbix Host when a NetBox Device is created or updated.
-    Extracts SNMP v2/v3 parameters and applies configured Role templates, interface type, and proxy.
+    Supports Agent, SNMP, IPMI, JMX interfaces and Server / Proxy / Proxy Group monitoring modes.
     """
     nb_ip = None
     if instance.primary_ip4:
@@ -205,31 +205,29 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
         mapped_tmpls = settings.get("templates", [])
         tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
 
-        # 3. Determine Interface Type & SNMP v2 / v3 details
-        cf_data = getattr(instance, 'custom_field_data', {}) or {}
-        snmp_details, detected_type_num, snmp_ver_name = build_snmp_details(cf_data)
-
+        # 3. Determine Interface Type & Parameters
         if_type_str = settings.get("interface_type") or "SNMP"
-        if if_type_str == "SNMP":
-            if_type_num = 2
-            port_num = "161"
-            details_payload = snmp_details
-        elif if_type_str == "Agent":
+        if if_type_str == "Agent":
             if_type_num = 1
             port_num = "10050"
             details_payload = None
+            snmp_ver_name = "Agent"
         elif if_type_str == "IPMI":
             if_type_num = 3
             port_num = "623"
             details_payload = None
+            snmp_ver_name = "IPMI"
         elif if_type_str == "JMX":
             if_type_num = 4
             port_num = "12345"
             details_payload = None
+            snmp_ver_name = "JMX"
         else:
+            # Default to SNMP
             if_type_num = 2
             port_num = "161"
-            details_payload = snmp_details
+            cf_data = getattr(instance, 'custom_field_data', {}) or {}
+            details_payload, _, snmp_ver_name = build_snmp_details(cf_data)
 
         if_payload = {
             "type": if_type_num,
@@ -242,24 +240,50 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
         if details_payload:
             if_payload["details"] = details_payload
 
+        # 4. Monitored By (Server / Proxy / Proxy Group)
         proxy_id = str(settings.get("proxy_id") or "0")
 
-        # 4. Check existing Zabbix Host
-        existing = api.call("host.get", {"filter": {"host": device_name}})
+        # 5. Check existing Zabbix Host
+        existing = api.call("host.get", {
+            "filter": {"host": device_name},
+            "selectInterfaces": ["interfaceid", "type", "main", "ip", "port"]
+        })
         if not (isinstance(existing, list) and len(existing) > 0):
-            existing = api.call("host.get", {"filter": {"name": device_name}})
+            existing = api.call("host.get", {
+                "filter": {"name": device_name},
+                "selectInterfaces": ["interfaceid", "type", "main", "ip", "port"]
+            })
 
         if isinstance(existing, list) and len(existing) > 0:
             hid = existing[0].get("hostid")
+            existing_ifaces = existing[0].get("interfaces", [])
+            if isinstance(existing_ifaces, list) and len(existing_ifaces) > 0:
+                main_iface = existing_ifaces[0]
+                for ifc in existing_ifaces:
+                    if str(ifc.get("main")) == "1":
+                        main_iface = ifc
+                        break
+                if "interfaceid" in main_iface:
+                    if_payload["interfaceid"] = main_iface["interfaceid"]
+
             upd_params = {
                 "hostid": hid,
-                "groups": [{"groupid": hostgroup_id}]
+                "groups": [{"groupid": hostgroup_id}],
+                "interfaces": [if_payload]
             }
             if tmpl_payload:
                 upd_params["templates"] = tmpl_payload
-            if proxy_id != "0":
-                upd_params["proxyid"] = proxy_id
+
+            if proxy_id == "0":
+                upd_params["monitored_by"] = 0
+                upd_params["proxyid"] = "0"
+            elif proxy_id.startswith("group_"):
+                upd_params["monitored_by"] = 2
+                upd_params["proxy_groupid"] = proxy_id.replace("group_", "")
+                upd_params["proxyid"] = "0"
+            else:
                 upd_params["monitored_by"] = 1
+                upd_params["proxyid"] = proxy_id
 
             res = api.call("host.update", upd_params)
             logger.info(f"[Zabbix Signal] Host '{device_name}' updated in Zabbix: {res}")
@@ -272,12 +296,20 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
             }
             if tmpl_payload:
                 create_params["templates"] = tmpl_payload
-            if proxy_id != "0":
-                create_params["proxyid"] = proxy_id
+
+            if proxy_id == "0":
+                create_params["monitored_by"] = 0
+                create_params["proxyid"] = "0"
+            elif proxy_id.startswith("group_"):
+                create_params["monitored_by"] = 2
+                create_params["proxy_groupid"] = proxy_id.replace("group_", "")
+                create_params["proxyid"] = "0"
+            else:
                 create_params["monitored_by"] = 1
+                create_params["proxyid"] = proxy_id
 
             res = api.call("host.create", create_params)
-            logger.info(f"[Zabbix Signal] Host '{device_name}' created in Zabbix ({snmp_ver_name}): {res}")
+            logger.info(f"[Zabbix Signal] Host '{device_name}' created in Zabbix ({if_type_str}/{snmp_ver_name}): {res}")
 
     except Exception as e:
         logger.error(f"[Zabbix Signal Error] Failed to sync Device '{device_name}' to Zabbix: {e}")

@@ -326,6 +326,17 @@ class ZabbixHostGroupsView(View):
                 if p_id:
                     all_proxies_list.append({"proxyid": p_id, "name": f"Proxy: {p_name}"})
 
+        try:
+            zabbix_proxy_groups = api.get_proxy_groups()
+            if isinstance(zabbix_proxy_groups, list):
+                for pg in zabbix_proxy_groups:
+                    pg_id = str(pg.get("proxy_groupid") or "")
+                    pg_name = pg.get("name") or f"Proxy Group {pg_id}"
+                    if pg_id:
+                        all_proxies_list.append({"proxyid": f"group_{pg_id}", "name": f"Proxy Group: {pg_name}"})
+        except Exception:
+            pass
+
         zabbix_group_map = {}
         if isinstance(zabbix_groups, list):
             for g in zabbix_groups:
@@ -433,6 +444,12 @@ class ZabbixMapTemplatesView(View):
         api = ZabbixAPI()
         z_templates = api.get_templates()
         z_proxies = api.get_proxies()
+
+        z_proxy_groups = None
+        try:
+            z_proxy_groups = api.get_proxy_groups()
+        except Exception:
+            pass
         
         tmpl_lookup = {}
         if isinstance(z_templates, list):
@@ -447,6 +464,16 @@ class ZabbixMapTemplatesView(View):
         proxy_name = None
         if proxy_id == "0":
             proxy_name = "Server"
+        elif proxy_id.startswith("group_"):
+            pg_id = proxy_id.replace("group_", "")
+            if isinstance(z_proxy_groups, list):
+                for pg in z_proxy_groups:
+                    if str(pg.get("proxy_groupid")) == pg_id:
+                        p_name = pg.get('name') or f"Group {pg_id}"
+                        proxy_name = f"Proxy Group: {p_name}"
+                        break
+            if not proxy_name:
+                proxy_name = f"Proxy Group (ID {pg_id})"
         elif proxy_id != "" and isinstance(z_proxies, list):
             for px in z_proxies:
                 px_id = str(px.get("proxyid") or px.get("id") or "")
@@ -575,6 +602,17 @@ class ZabbixHostsView(View):
                     p_name = p.get("name") or p.get("host")
                     if p_id and p_name:
                         proxy_map[p_id] = p_name
+        except Exception:
+            pass
+
+        try:
+            p_groups = api.get_proxy_groups()
+            if isinstance(p_groups, list):
+                for pg in p_groups:
+                    pg_id = str(pg.get("proxy_groupid") or "")
+                    pg_name = pg.get("name")
+                    if pg_id and pg_name:
+                        proxy_map[f"group_{pg_id}"] = f"Proxy Group: {pg_name}"
         except Exception:
             pass
 
@@ -831,20 +869,20 @@ class ZabbixHostsView(View):
                     t_val = str(main_iface.get("type", "1"))
                     item["zabbix_protocol"] = "SNMP" if t_val == "2" else "IPMI" if t_val == "3" else "JMX" if t_val == "4" else "Agent"
 
-                    details = main_iface.get("details", {})
-                    if not isinstance(details, dict):
-                        details = {}
+                    if t_val == "2":
+                        details = main_iface.get("details", {})
+                        if not isinstance(details, dict):
+                            details = {}
 
-                    ver = str(details.get("version") or main_iface.get("version") or ("2" if t_val == "2" else ""))
+                        ver = str(details.get("version") or main_iface.get("version") or "2")
 
-                    if t_val == "2" or ver in ["1", "2", "3", "2c"]:
                         if ver == "1":
                             item["snmp_version"] = "SNMPv1"
                         elif ver in ["2", "2c"]:
                             item["snmp_version"] = "SNMPv2c"
                         elif ver == "3":
                             item["snmp_version"] = "SNMPv3"
-                        elif t_val == "2":
+                        else:
                             item["snmp_version"] = "SNMPv2c"
 
                         raw_comm = None
@@ -897,10 +935,11 @@ class ZabbixHostsView(View):
 
                 if (monitored_by == "1" or proxy_id != "0") and proxy_id in proxy_map:
                     item["zabbix_monitored_by"] = f"Proxy: {proxy_map[proxy_id]}"
+                elif (monitored_by == "2" or proxy_group_id != "0"):
+                    pg_key = f"group_{proxy_group_id}"
+                    item["zabbix_monitored_by"] = proxy_map.get(pg_key, f"Proxy Group (ID {proxy_group_id})")
                 elif proxy_id != "0":
                     item["zabbix_monitored_by"] = f"Proxy (ID {proxy_id})"
-                elif monitored_by == "2" or proxy_group_id != "0":
-                    item["zabbix_monitored_by"] = f"Proxy Group (ID {proxy_group_id})"
                 else:
                     item["zabbix_monitored_by"] = "Server"
 
@@ -992,30 +1031,27 @@ class ZabbixPushDeviceView(View):
         mapped_tmpls = settings.get("templates", [])
         tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
 
-        cf_data = getattr(dev, 'custom_field_data', {}) or {}
-        snmp_details, detected_type_num, snmp_ver_name = build_snmp_details(cf_data)
-
         if_type_str = settings.get("interface_type") or "SNMP"
-        if if_type_str == "SNMP":
-            if_type_num = 2
-            port_num = "161"
-            details_payload = snmp_details
-        elif if_type_str == "Agent":
+        if if_type_str == "Agent":
             if_type_num = 1
             port_num = "10050"
             details_payload = None
+            snmp_ver_name = "Agent"
         elif if_type_str == "IPMI":
             if_type_num = 3
             port_num = "623"
             details_payload = None
+            snmp_ver_name = "IPMI"
         elif if_type_str == "JMX":
             if_type_num = 4
             port_num = "12345"
             details_payload = None
+            snmp_ver_name = "JMX"
         else:
             if_type_num = 2
             port_num = "161"
-            details_payload = snmp_details
+            cf_data = getattr(dev, 'custom_field_data', {}) or {}
+            details_payload, _, snmp_ver_name = build_snmp_details(cf_data)
 
         if_payload = {
             "type": if_type_num,
@@ -1030,27 +1066,52 @@ class ZabbixPushDeviceView(View):
 
         proxy_id = str(settings.get("proxy_id") or "0")
 
-        existing = api.call("host.get", {"filter": {"host": device_name}})
+        existing = api.call("host.get", {
+            "filter": {"host": device_name},
+            "selectInterfaces": ["interfaceid", "type", "main", "ip", "port"]
+        })
         if not (isinstance(existing, list) and len(existing) > 0):
-            existing = api.call("host.get", {"filter": {"name": device_name}})
+            existing = api.call("host.get", {
+                "filter": {"name": device_name},
+                "selectInterfaces": ["interfaceid", "type", "main", "ip", "port"]
+            })
 
         if isinstance(existing, list) and len(existing) > 0:
             hid = existing[0].get("hostid")
+            existing_ifaces = existing[0].get("interfaces", [])
+            if isinstance(existing_ifaces, list) and len(existing_ifaces) > 0:
+                main_iface = existing_ifaces[0]
+                for ifc in existing_ifaces:
+                    if str(ifc.get("main")) == "1":
+                        main_iface = ifc
+                        break
+                if "interfaceid" in main_iface:
+                    if_payload["interfaceid"] = main_iface["interfaceid"]
+
             upd_params = {
                 "hostid": hid,
-                "groups": [{"groupid": hostgroup_id}]
+                "groups": [{"groupid": hostgroup_id}],
+                "interfaces": [if_payload]
             }
             if tmpl_payload:
                 upd_params["templates"] = tmpl_payload
-            if proxy_id != "0":
-                upd_params["proxyid"] = proxy_id
+
+            if proxy_id == "0":
+                upd_params["monitored_by"] = 0
+                upd_params["proxyid"] = "0"
+            elif proxy_id.startswith("group_"):
+                upd_params["monitored_by"] = 2
+                upd_params["proxy_groupid"] = proxy_id.replace("group_", "")
+                upd_params["proxyid"] = "0"
+            else:
                 upd_params["monitored_by"] = 1
+                upd_params["proxyid"] = proxy_id
 
             res = api.call("host.update", upd_params)
             if isinstance(res, dict) and "error" in res:
                 messages.error(request, f"Failed to update device '{device_name}' in Zabbix: {res['error']}")
             else:
-                messages.success(request, f"Successfully updated device '{device_name}' in Zabbix ({snmp_ver_name}) with {len(mapped_tmpls)} template(s)!")
+                messages.success(request, f"Successfully updated device '{device_name}' in Zabbix ({if_type_str}) with {len(mapped_tmpls)} template(s)!")
         else:
             create_params = {
                 "host": device_name,
@@ -1060,15 +1121,23 @@ class ZabbixPushDeviceView(View):
             }
             if tmpl_payload:
                 create_params["templates"] = tmpl_payload
-            if proxy_id != "0":
-                create_params["proxyid"] = proxy_id
+
+            if proxy_id == "0":
+                create_params["monitored_by"] = 0
+                create_params["proxyid"] = "0"
+            elif proxy_id.startswith("group_"):
+                create_params["monitored_by"] = 2
+                create_params["proxy_groupid"] = proxy_id.replace("group_", "")
+                create_params["proxyid"] = "0"
+            else:
                 create_params["monitored_by"] = 1
+                create_params["proxyid"] = proxy_id
 
             res = api.call("host.create", create_params)
             if isinstance(res, dict) and "error" in res:
                 messages.error(request, f"Failed to push device '{device_name}' to Zabbix: {res['error']}")
             else:
-                messages.success(request, f"Successfully pushed device '{device_name}' (IP: {nb_ip}) to Zabbix as {if_type_str} ({snmp_ver_name}) with {len(mapped_tmpls)} template(s)!")
+                messages.success(request, f"Successfully pushed device '{device_name}' (IP: {nb_ip}) to Zabbix as {if_type_str} with {len(mapped_tmpls)} template(s)!")
 
         return redirect('plugins:netbox_zabbix:hosts')
 
