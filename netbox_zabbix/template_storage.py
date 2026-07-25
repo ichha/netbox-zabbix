@@ -4,14 +4,56 @@ import logging
 
 logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
-MAPPING_FILE = os.path.join(os.path.dirname(__file__), 'hostgroup_templates.json')
+MAPPING_FILE = os.path.join(os.path.dirname(__file__), 'hostgroup_zabbix_settings.json')
 
 
 def get_mapped_templates(role_name):
     """
     Retrieve list of dicts [{'id': '10001', 'name': 'Linux by Zabbix agent'}] for role_name.
     """
-    # 1. Try Database model first
+    settings = get_role_zabbix_settings(role_name)
+    return settings.get('templates', [])
+
+
+def get_role_zabbix_settings(role_name):
+    """
+    Retrieve complete Zabbix settings for a NetBox Role / Host Group.
+    Returns dict:
+    {
+        'templates': [{'id': '10001', 'name': 'Template Name'}],
+        'interface_type': 'SNMP', # 'SNMP', 'Agent', 'JMX', 'IPMI'
+        'proxy_id': '0',          # '0' for Server, or proxyid
+        'proxy_name': 'Server'
+    }
+    """
+    default_res = {
+        'templates': [],
+        'interface_type': 'SNMP',
+        'proxy_id': '0',
+        'proxy_name': 'Server'
+    }
+
+    # 1. Try JSON storage
+    try:
+        if os.path.exists(MAPPING_FILE):
+            with open(MAPPING_FILE, 'r') as f:
+                data = json.load(f)
+                if role_name in data:
+                    entry = data[role_name]
+                    if isinstance(entry, dict):
+                        return {
+                            'templates': entry.get('templates', []),
+                            'interface_type': entry.get('interface_type', 'SNMP'),
+                            'proxy_id': str(entry.get('proxy_id', '0')),
+                            'proxy_name': entry.get('proxy_name', 'Server')
+                        }
+                    elif isinstance(entry, list):
+                        default_res['templates'] = entry
+                        return default_res
+    except Exception as e:
+        logger.error(f"JSON file lookup failed: {e}")
+
+    # 2. Try DB model fallback for legacy templates
     try:
         from .models import ZabbixHostGroupTemplate
         obj = ZabbixHostGroupTemplate.objects.filter(role_name=role_name).first()
@@ -22,37 +64,24 @@ def get_mapped_templates(role_name):
             for i, tid in enumerate(ids):
                 tname = names[i] if i < len(names) else f"Template {tid}"
                 res.append({"id": str(tid), "name": tname})
-            return res
+            default_res['templates'] = res
+            return default_res
     except Exception as e:
         logger.debug(f"DB lookup for template mapping failed: {e}")
 
-    # 2. Try JSON file storage fallback
-    try:
-        if os.path.exists(MAPPING_FILE):
-            with open(MAPPING_FILE, 'r') as f:
-                data = json.load(f)
-                return data.get(role_name, [])
-    except Exception as e:
-        logger.error(f"JSON file lookup failed: {e}")
-
-    return []
+    return default_res
 
 
-def save_mapped_templates(role_name, template_ids, template_names):
+def save_mapped_templates(role_name, template_ids, template_names, interface_type='SNMP', proxy_id='0', proxy_name='Server'):
     """
-    Save template mapping for role_name.
+    Save complete Zabbix settings (Templates, Interface Type, Proxy) for role_name.
     """
-    # 1. Save to Database
-    try:
-        from .models import ZabbixHostGroupTemplate
-        obj, _ = ZabbixHostGroupTemplate.objects.get_or_create(role_name=role_name)
-        obj.template_ids = [str(t) for t in template_ids]
-        obj.template_names = template_names
-        obj.save()
-    except Exception as e:
-        logger.debug(f"DB save for template mapping failed: {e}")
+    formatted_templates = [
+        {"id": str(tid), "name": template_names[i] if i < len(template_names) else f"Template {tid}"}
+        for i, tid in enumerate(template_ids)
+    ]
 
-    # 2. Save to JSON file fallback
+    # 1. Save to JSON file
     try:
         data = {}
         if os.path.exists(MAPPING_FILE):
@@ -62,12 +91,24 @@ def save_mapped_templates(role_name, template_ids, template_names):
             except Exception:
                 data = {}
 
-        data[role_name] = [
-            {"id": str(tid), "name": template_names[i] if i < len(template_names) else f"Template {tid}"}
-            for i, tid in enumerate(template_ids)
-        ]
+        data[role_name] = {
+            'templates': formatted_templates,
+            'interface_type': interface_type if interface_type in ['SNMP', 'Agent', 'JMX', 'IPMI'] else 'SNMP',
+            'proxy_id': str(proxy_id),
+            'proxy_name': proxy_name if proxy_name else 'Server'
+        }
 
         with open(MAPPING_FILE, 'w') as f:
             json.dump(data, f, indent=2)
     except Exception as e:
         logger.error(f"JSON file save failed: {e}")
+
+    # 2. Save legacy templates DB model
+    try:
+        from .models import ZabbixHostGroupTemplate
+        obj, _ = ZabbixHostGroupTemplate.objects.get_or_create(role_name=role_name)
+        obj.template_ids = [str(t) for t in template_ids]
+        obj.template_names = template_names
+        obj.save()
+    except Exception as e:
+        logger.debug(f"DB save for template mapping failed: {e}")

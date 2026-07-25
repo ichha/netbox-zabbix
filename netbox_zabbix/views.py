@@ -5,7 +5,7 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 import logging
 from .zabbix_api import ZabbixAPI
-from .template_storage import get_mapped_templates, save_mapped_templates
+from .template_storage import get_mapped_templates, get_role_zabbix_settings, save_mapped_templates
 
 logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
@@ -293,6 +293,7 @@ class ZabbixHostGroupsView(View):
         api = ZabbixAPI()
         zabbix_groups = api.get_host_groups()
         zabbix_templates = api.get_templates()
+        zabbix_proxies = api.get_proxies()
         
         if isinstance(zabbix_groups, dict) and "error" in zabbix_groups:
             return render(request, 'netbox_zabbix/zabbix_table.html', {
@@ -310,6 +311,14 @@ class ZabbixHostGroupsView(View):
                     "host": tmpl.get("host", "")
                 })
 
+        all_proxies_list = [{"proxyid": "0", "name": "Server (Direct Connection)"}]
+        if isinstance(zabbix_proxies, list):
+            for px in zabbix_proxies:
+                p_id = str(px.get("proxyid", ""))
+                p_name = px.get("name") or px.get("host") or f"Proxy {p_id}"
+                if p_id:
+                    all_proxies_list.append({"proxyid": p_id, "name": f"Proxy: {p_name}"})
+
         zabbix_group_map = {}
         if isinstance(zabbix_groups, list):
             for g in zabbix_groups:
@@ -324,7 +333,8 @@ class ZabbixHostGroupsView(View):
         except Exception as e:
             logger.error(f"Error fetching NetBox DeviceRoles: {e}")
 
-        headers = ["Group ID", "Zabbix Host Group Name", "NetBox Device Role", "Mapped Templates", "Sync Status"]
+        # Update Header: Change "Mapped Templates" to "Zabbix Settings"
+        headers = ["Group ID", "Zabbix Host Group Name", "NetBox Device Role", "Zabbix Settings", "Sync Status"]
         items = []
         processed_zabbix_lower = set()
 
@@ -333,13 +343,16 @@ class ZabbixHostGroupsView(View):
             r_lower = r_name.strip().lower()
             role_slug = r_name.replace("/", "_").replace(" ", "_").replace("-", "_").lower()
 
-            cur_mapped = get_mapped_templates(r_name)
-            mapped_templates_cell = {
-                "type": "mapped_templates",
+            settings = get_role_zabbix_settings(r_name)
+            mapped_settings_cell = {
+                "type": "mapped_settings",
                 "role_name": r_name,
                 "role_slug": role_slug,
-                "templates": cur_mapped,
-                "template_ids": [str(t["id"]) for t in cur_mapped]
+                "templates": settings.get("templates", []),
+                "template_ids": [str(t["id"]) for t in settings.get("templates", [])],
+                "interface_type": settings.get("interface_type", "SNMP"),
+                "proxy_id": str(settings.get("proxy_id", "0")),
+                "proxy_name": settings.get("proxy_name", "Server")
             }
 
             if r_lower in zabbix_group_map:
@@ -360,7 +373,7 @@ class ZabbixHostGroupsView(View):
                 gid,
                 zg_name_disp,
                 r_name,
-                mapped_templates_cell,
+                mapped_settings_cell,
                 status_cell
             ])
 
@@ -369,23 +382,32 @@ class ZabbixHostGroupsView(View):
                 g_name = g.get("name", "")
                 if g_name.strip().lower() not in processed_zabbix_lower:
                     role_slug = g_name.replace("/", "_").replace(" ", "_").replace("-", "_").lower()
-                    cur_mapped = get_mapped_templates(g_name)
-                    mapped_templates_cell = {
-                        "type": "mapped_templates",
+                    settings = get_role_zabbix_settings(g_name)
+                    mapped_settings_cell = {
+                        "type": "mapped_settings",
                         "role_name": g_name,
                         "role_slug": role_slug,
-                        "templates": cur_mapped,
-                        "template_ids": [str(t["id"]) for t in cur_mapped]
+                        "templates": settings.get("templates", []),
+                        "template_ids": [str(t["id"]) for t in settings.get("templates", [])],
+                        "interface_type": settings.get("interface_type", "SNMP"),
+                        "proxy_id": str(settings.get("proxy_id", "0")),
+                        "proxy_name": settings.get("proxy_name", "Server")
                     }
                     items.append([
                         g.get("groupid", "-"),
                         g_name,
                         "—",
-                        mapped_templates_cell,
+                        mapped_settings_cell,
                         {"type": "none", "text": "Zabbix Only"}
                     ])
 
-        context = process_table_data(request, items, headers, 'Host Groups', has_status=False, extra_context={'all_templates': all_templates_list})
+        context = process_table_data(
+            request, items, headers, 'Host Groups', has_status=False, 
+            extra_context={
+                'all_templates': all_templates_list,
+                'all_proxies': all_proxies_list
+            }
+        )
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
@@ -393,6 +415,8 @@ class ZabbixMapTemplatesView(View):
     def post(self, request):
         role_name = request.POST.get('role_name')
         template_ids = request.POST.getlist('template_ids')
+        interface_type = request.POST.get('interface_type', 'SNMP')
+        proxy_id = str(request.POST.get('proxy_id', '0'))
         
         if not role_name:
             messages.error(request, "Missing Role/Hostgroup name.")
@@ -400,6 +424,7 @@ class ZabbixMapTemplatesView(View):
 
         api = ZabbixAPI()
         z_templates = api.get_templates()
+        z_proxies = api.get_proxies()
         
         tmpl_lookup = {}
         if isinstance(z_templates, list):
@@ -411,9 +436,17 @@ class ZabbixMapTemplatesView(View):
 
         template_names = [tmpl_lookup.get(str(tid), f"Template {tid}") for tid in template_ids]
 
-        save_mapped_templates(role_name, template_ids, template_names)
+        proxy_name = "Server"
+        if proxy_id != "0" and isinstance(z_proxies, list):
+            for px in z_proxies:
+                if str(px.get("proxyid", "")) == proxy_id:
+                    p_name = px.get('name') or px.get('host')
+                    proxy_name = f"Proxy: {p_name}"
+                    break
 
-        messages.success(request, f"Successfully updated Zabbix Template mappings for '{role_name}' ({len(template_ids)} template(s) mapped)!")
+        save_mapped_templates(role_name, template_ids, template_names, interface_type, proxy_id, proxy_name)
+
+        messages.success(request, f"Successfully saved Zabbix Settings for '{role_name}' (Templates: {len(template_ids)}, Type: {interface_type}, Bound to: {proxy_name})!")
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
@@ -426,13 +459,19 @@ class ZabbixRemoveTemplateView(View):
             messages.error(request, "Missing Role name or Template ID.")
             return redirect('plugins:netbox_zabbix:hostgroups')
 
-        cur_mapped = get_mapped_templates(role_name)
+        settings = get_role_zabbix_settings(role_name)
+        cur_mapped = settings.get("templates", [])
         new_mapped = [t for t in cur_mapped if str(t.get("id")) != str(template_id)]
         
         new_ids = [str(t["id"]) for t in new_mapped]
         new_names = [t["name"] for t in new_mapped]
         
-        save_mapped_templates(role_name, new_ids, new_names)
+        save_mapped_templates(
+            role_name, new_ids, new_names, 
+            settings.get("interface_type", "SNMP"), 
+            settings.get("proxy_id", "0"), 
+            settings.get("proxy_name", "Server")
+        )
         messages.success(request, f"Removed template from '{role_name}'.")
         return redirect('plugins:netbox_zabbix:hostgroups')
 
@@ -930,11 +969,35 @@ class ZabbixPushDeviceView(View):
             else:
                 hostgroup_id = "2"
 
-        # 2. Get mapped templates
-        mapped_tmpls = get_mapped_templates(role_name) if role_name else []
+        # 2. Retrieve configured Zabbix Settings for this Role
+        settings = get_role_zabbix_settings(role_name) if role_name else {}
+        mapped_tmpls = settings.get("templates", [])
         tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
 
-        # 3. Check if host already exists
+        # Determine Interface Type (SNMP=2, Agent=1, IPMI=3, JMX=4)
+        if_type_str = settings.get("interface_type", "SNMP")
+        if_type_num = 2 if if_type_str == 'SNMP' else 1 if if_type_str == 'Agent' else 3 if if_type_str == 'IPMI' else 4 if if_type_str == 'JMX' else 2
+        port_num = "161" if if_type_num == 2 else "10050" if if_type_num == 1 else "623" if if_type_num == 3 else "12345"
+
+        if_payload = {
+            "type": if_type_num,
+            "main": 1,
+            "useip": 1,
+            "ip": nb_ip,
+            "dns": "",
+            "port": port_num
+        }
+        if if_type_num == 2:  # SNMP details
+            if_payload["details"] = {
+                "version": 2,
+                "community": "{$SNMP_COMMUNITY}",
+                "bulk": 1,
+                "max_repetitions": 10
+            }
+
+        proxy_id = str(settings.get("proxy_id", "0"))
+
+        # 3. Check if host already exists in Zabbix
         existing = api.call("host.get", {"filter": {"host": device_name}})
         if not (isinstance(existing, list) and len(existing) > 0):
             existing = api.call("host.get", {"filter": {"name": device_name}})
@@ -947,36 +1010,33 @@ class ZabbixPushDeviceView(View):
             }
             if tmpl_payload:
                 upd_params["templates"] = tmpl_payload
+            if proxy_id != "0":
+                upd_params["proxyid"] = proxy_id
+                upd_params["monitored_by"] = 1
 
             res = api.call("host.update", upd_params)
             if isinstance(res, dict) and "error" in res:
                 messages.error(request, f"Failed to update device '{device_name}' in Zabbix: {res['error']}")
             else:
-                messages.success(request, f"Successfully updated device '{device_name}' in Zabbix with {len(mapped_tmpls)} mapped template(s)!")
+                messages.success(request, f"Successfully updated device '{device_name}' in Zabbix with {len(mapped_tmpls)} template(s) and {if_type_str} interface!")
         else:
             create_params = {
                 "host": device_name,
                 "name": device_name,
-                "interfaces": [
-                    {
-                        "type": 1,
-                        "main": 1,
-                        "useip": 1,
-                        "ip": nb_ip,
-                        "dns": "",
-                        "port": "10050"
-                    }
-                ],
+                "interfaces": [if_payload],
                 "groups": [{"groupid": hostgroup_id}]
             }
             if tmpl_payload:
                 create_params["templates"] = tmpl_payload
+            if proxy_id != "0":
+                create_params["proxyid"] = proxy_id
+                create_params["monitored_by"] = 1
 
             res = api.call("host.create", create_params)
             if isinstance(res, dict) and "error" in res:
                 messages.error(request, f"Failed to push device '{device_name}' to Zabbix: {res['error']}")
             else:
-                messages.success(request, f"Successfully pushed device '{device_name}' (IP: {nb_ip}) to Zabbix with {len(mapped_tmpls)} mapped template(s)!")
+                messages.success(request, f"Successfully pushed device '{device_name}' (IP: {nb_ip}) to Zabbix as {if_type_str} with {len(mapped_tmpls)} template(s)!")
 
         return redirect('plugins:netbox_zabbix:hosts')
 
