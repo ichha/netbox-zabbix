@@ -76,13 +76,8 @@ def build_snmp_details(cf_data):
         }
         return details, 2, "SNMPv2c"
     else:
-        details = {
-            "version": 2,
-            "community": "{$SNMP_COMMUNITY}",
-            "bulk": 1,
-            "max_repetitions": 10
-        }
-        return details, 2, "SNMPv2c (Default)"
+        # No SNMP community found
+        return None, None, None
 
 
 def get_or_create_hostgroup_id(api, role_name):
@@ -146,7 +141,7 @@ def execute_zabbix_host_save(api, is_update, params, proxy_id_str):
         clean_params = dict(params)
         clean_params.pop("monitored_by", None)
         clean_params.pop("proxy_groupid", None)
-        
+
         p_str = str(proxy_id_str or "0").strip()
         if p_str != "0" and not p_str.startswith("group_"):
             clean_params["proxyid"] = p_str
@@ -158,6 +153,151 @@ def execute_zabbix_host_save(api, is_update, params, proxy_id_str):
         res = api.call(method, clean_params)
 
     return res
+
+
+def push_device_to_zabbix(device, reason=""):
+    """
+    Core function to push a single NetBox Device to Zabbix.
+    Enforces all guard conditions before pushing:
+      1. Device must have a name
+      2. Device must have a Primary IP
+      3. Device Role must have Zabbix settings configured (interface_type + at least 1 template OR proxy)
+      4. For SNMP interface type: device must have SNMP community or SNMPv3 credentials
+
+    Returns: (success: bool, message: str)
+    """
+    device_name = device.name
+    if not device_name:
+        return False, "Device has no name."
+
+    # Guard 1: Primary IP required
+    nb_ip = None
+    if device.primary_ip4:
+        nb_ip = str(device.primary_ip4.address).split('/')[0]
+    elif device.primary_ip6:
+        nb_ip = str(device.primary_ip6.address).split('/')[0]
+
+    if not nb_ip:
+        logger.info(f"[Zabbix] '{device_name}': No Primary IP assigned. Skipping.{' Reason: ' + reason if reason else ''}")
+        return False, "No Primary IP assigned."
+
+    # Guard 2: Zabbix settings must be configured for the role
+    role_name = device.role.name if device.role else None
+    settings = get_role_zabbix_settings(role_name) if role_name else {}
+
+    if_type_str = settings.get("interface_type")
+    mapped_tmpls = settings.get("templates", [])
+    proxy_id = str(settings.get("proxy_id") or "0")
+
+    has_settings = bool(if_type_str) or bool(mapped_tmpls) or proxy_id != "0"
+    if not has_settings:
+        logger.info(f"[Zabbix] '{device_name}': No Zabbix settings configured for role '{role_name}'. Skipping.{' Reason: ' + reason if reason else ''}")
+        return False, f"No Zabbix settings configured for role '{role_name}'."
+
+    # Default interface type to SNMP if not set but templates exist
+    if not if_type_str:
+        if_type_str = "SNMP"
+
+    # Guard 3: For SNMP type — community or SNMPv3 credentials required
+    cf_data = getattr(device, 'custom_field_data', {}) or {}
+    details_payload = None
+
+    if if_type_str == "SNMP":
+        details_payload, _, snmp_ver_name = build_snmp_details(cf_data)
+        if details_payload is None:
+            logger.info(f"[Zabbix] '{device_name}': SNMP type configured but no SNMP community or SNMPv3 credentials found. Skipping.{' Reason: ' + reason if reason else ''}")
+            return False, "SNMP type configured but no SNMP community or SNMPv3 credentials found."
+        if_type_num = 2
+        port_num = "161"
+    elif if_type_str == "Agent":
+        if_type_num = 1
+        port_num = "10050"
+        snmp_ver_name = "Agent"
+    elif if_type_str == "IPMI":
+        if_type_num = 3
+        port_num = "623"
+        snmp_ver_name = "IPMI"
+    elif if_type_str == "JMX":
+        if_type_num = 4
+        port_num = "12345"
+        snmp_ver_name = "JMX"
+    else:
+        if_type_num = 2
+        port_num = "161"
+        snmp_ver_name = "SNMP"
+
+    # Build interface payload
+    if_payload = {
+        "type": if_type_num,
+        "main": 1,
+        "useip": 1,
+        "ip": nb_ip,
+        "dns": "",
+        "port": port_num
+    }
+    if details_payload:
+        if_payload["details"] = details_payload
+
+    interfaces_list = [if_payload]
+    tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
+
+    # Execute push
+    try:
+        api = ZabbixAPI()
+        hostgroup_id = get_or_create_hostgroup_id(api, role_name)
+
+        existing = api.call("host.get", {
+            "filter": {"host": device_name},
+            "selectInterfaces": ["interfaceid", "type", "main", "ip", "port"]
+        })
+        if not (isinstance(existing, list) and len(existing) > 0):
+            existing = api.call("host.get", {
+                "filter": {"name": device_name},
+                "selectInterfaces": ["interfaceid", "type", "main", "ip", "port"]
+            })
+
+        if isinstance(existing, list) and len(existing) > 0:
+            hid = existing[0].get("hostid")
+            existing_ifaces = existing[0].get("interfaces", [])
+            if isinstance(existing_ifaces, list) and len(existing_ifaces) > 0:
+                main_iface = existing_ifaces[0]
+                for ifc in existing_ifaces:
+                    if str(ifc.get("main")) == "1":
+                        main_iface = ifc
+                        break
+                if "interfaceid" in main_iface:
+                    if_payload["interfaceid"] = main_iface["interfaceid"]
+
+            upd_params = {
+                "hostid": hid,
+                "groups": [{"groupid": hostgroup_id}],
+                "interfaces": interfaces_list
+            }
+            if tmpl_payload:
+                upd_params["templates"] = tmpl_payload
+
+            res = execute_zabbix_host_save(api, True, upd_params, proxy_id)
+            logger.info(f"[Zabbix] '{device_name}' updated in Zabbix ({if_type_str}).{' Reason: ' + reason if reason else ''} Result: {res}")
+        else:
+            create_params = {
+                "host": device_name,
+                "name": device_name,
+                "interfaces": interfaces_list,
+                "groups": [{"groupid": hostgroup_id}]
+            }
+            if tmpl_payload:
+                create_params["templates"] = tmpl_payload
+
+            res = execute_zabbix_host_save(api, False, create_params, proxy_id)
+            logger.info(f"[Zabbix] '{device_name}' created in Zabbix ({if_type_str}/{snmp_ver_name}).{' Reason: ' + reason if reason else ''} Result: {res}")
+
+        if isinstance(res, dict) and "error" in res:
+            return False, str(res["error"])
+        return True, f"OK ({if_type_str}/{snmp_ver_name})"
+
+    except Exception as e:
+        logger.error(f"[Zabbix Error] Failed to push '{device_name}': {e}")
+        return False, str(e)
 
 
 # ==========================================
@@ -230,121 +370,11 @@ def sync_device_role_to_zabbix_on_delete(sender, instance, **kwargs):
 
 @receiver(post_save, sender=Device)
 def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
-    nb_ip = None
-    if instance.primary_ip4:
-        nb_ip = str(instance.primary_ip4.address).split('/')[0]
-    elif instance.primary_ip6:
-        nb_ip = str(instance.primary_ip6.address).split('/')[0]
-
-    api = ZabbixAPI()
-    device_name = instance.name
-
-    if not device_name or not nb_ip:
-        logger.info(f"[Zabbix Signal] Device '{device_name}' saved without Primary IP. Skipping Zabbix host creation.")
-        return
-
-    logger.info(f"[Zabbix Signal] NetBox Device saved: '{device_name}' (IP: {nb_ip}). Syncing to Zabbix...")
-
-    try:
-        role_name = instance.role.name if instance.role else None
-
-        # 1. Host Group ID
-        hostgroup_id = get_or_create_hostgroup_id(api, role_name)
-
-        # 2. Configured Zabbix Settings for this Role
-        settings = get_role_zabbix_settings(role_name) if role_name else {}
-        mapped_tmpls = settings.get("templates", [])
-        tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
-
-        cf_data = getattr(instance, 'custom_field_data', {}) or {}
-
-        # 3. Determine Interface Type & Parameters
-        if_type_str = settings.get("interface_type") or "SNMP"
-        if if_type_str == "Agent":
-            if_type_num = 1
-            port_num = "10050"
-            details_payload = None
-            snmp_ver_name = "Agent"
-        elif if_type_str == "IPMI":
-            if_type_num = 3
-            port_num = "623"
-            details_payload = None
-            snmp_ver_name = "IPMI"
-        elif if_type_str == "JMX":
-            if_type_num = 4
-            port_num = "12345"
-            details_payload = None
-            snmp_ver_name = "JMX"
-        else:
-            if_type_num = 2
-            port_num = "161"
-            details_payload, _, snmp_ver_name = build_snmp_details(cf_data)
-
-        if_payload = {
-            "type": if_type_num,
-            "main": 1,
-            "useip": 1,
-            "ip": nb_ip,
-            "dns": "",
-            "port": port_num
-        }
-        if details_payload:
-            if_payload["details"] = details_payload
-
-        # Send strictly ONLY the selected interface type
-        interfaces_list = [if_payload]
-
-        # 4. Monitored By (Server / Proxy / Proxy Group)
-        proxy_id = str(settings.get("proxy_id") or "0")
-
-        # 5. Check existing Zabbix Host
-        existing = api.call("host.get", {
-            "filter": {"host": device_name},
-            "selectInterfaces": ["interfaceid", "type", "main", "ip", "port"]
-        })
-        if not (isinstance(existing, list) and len(existing) > 0):
-            existing = api.call("host.get", {
-                "filter": {"name": device_name},
-                "selectInterfaces": ["interfaceid", "type", "main", "ip", "port"]
-            })
-
-        if isinstance(existing, list) and len(existing) > 0:
-            hid = existing[0].get("hostid")
-            existing_ifaces = existing[0].get("interfaces", [])
-            if isinstance(existing_ifaces, list) and len(existing_ifaces) > 0:
-                main_iface = existing_ifaces[0]
-                for ifc in existing_ifaces:
-                    if str(ifc.get("main")) == "1":
-                        main_iface = ifc
-                        break
-                if "interfaceid" in main_iface:
-                    if_payload["interfaceid"] = main_iface["interfaceid"]
-
-            upd_params = {
-                "hostid": hid,
-                "groups": [{"groupid": hostgroup_id}],
-                "interfaces": interfaces_list
-            }
-            if tmpl_payload:
-                upd_params["templates"] = tmpl_payload
-
-            res = execute_zabbix_host_save(api, True, upd_params, proxy_id)
-            logger.info(f"[Zabbix Signal] Host '{device_name}' updated in Zabbix: {res}")
-        else:
-            create_params = {
-                "host": device_name,
-                "name": device_name,
-                "interfaces": interfaces_list,
-                "groups": [{"groupid": hostgroup_id}]
-            }
-            if tmpl_payload:
-                create_params["templates"] = tmpl_payload
-
-            res = execute_zabbix_host_save(api, False, create_params, proxy_id)
-            logger.info(f"[Zabbix Signal] Host '{device_name}' created in Zabbix ({if_type_str}/{snmp_ver_name}): {res}")
-
-    except Exception as e:
-        logger.error(f"[Zabbix Signal Error] Failed to sync Device '{device_name}' to Zabbix: {e}")
+    """
+    Triggered on every NetBox Device save.
+    Guards: Primary IP required, Zabbix settings required, SNMP credentials required for SNMP type.
+    """
+    push_device_to_zabbix(instance, reason="Device saved in NetBox")
 
 
 @receiver(post_delete, sender=Device)
@@ -366,3 +396,44 @@ def sync_device_to_zabbix_on_delete(sender, instance, **kwargs):
             logger.info(f"[Zabbix Signal] Host '{device_name}' deleted from Zabbix: {res}")
     except Exception as e:
         logger.error(f"[Zabbix Signal Error] Failed to delete Host '{device_name}' from Zabbix: {e}")
+
+
+# ==========================================
+# ZABBIX SETTINGS SAVE SIGNAL
+# Auto-push all devices in a role when Zabbix settings are saved/updated
+# ==========================================
+
+def connect_zabbix_settings_signal():
+    """
+    Connect post_save signal to ZabbixHostGroupTemplate model.
+    Called from AppConfig.ready() after models are loaded.
+    """
+    try:
+        from .models import ZabbixHostGroupTemplate
+
+        @receiver(post_save, sender=ZabbixHostGroupTemplate)
+        def on_zabbix_settings_saved(sender, instance, created, **kwargs):
+            role_name = instance.role_name
+            action = "created" if created else "updated"
+            logger.info(f"[Zabbix Signal] Zabbix settings {action} for role '{role_name}'. Auto-pushing all devices in this role...")
+
+            try:
+                devices = Device.objects.filter(role__name=role_name).select_related(
+                    'role', 'primary_ip4', 'primary_ip6'
+                )
+                pushed = 0
+                skipped = 0
+                for device in devices:
+                    success, msg = push_device_to_zabbix(device, reason=f"Zabbix settings {action} for role '{role_name}'")
+                    if success:
+                        pushed += 1
+                    else:
+                        skipped += 1
+                        logger.info(f"[Zabbix Signal] Skipped '{device.name}': {msg}")
+
+                logger.info(f"[Zabbix Signal] Auto-push complete for role '{role_name}': {pushed} pushed, {skipped} skipped.")
+            except Exception as e:
+                logger.error(f"[Zabbix Signal Error] Auto-push failed for role '{role_name}': {e}")
+
+    except Exception as e:
+        logger.warning(f"[Zabbix Signal] Could not connect ZabbixHostGroupTemplate signal: {e}")

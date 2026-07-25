@@ -12,7 +12,7 @@ from .template_storage import (
     remove_role_zabbix_settings,
     remove_role_setting_field
 )
-from .signals import build_snmp_details, get_or_create_hostgroup_id, execute_zabbix_host_save
+from .signals import build_snmp_details, get_or_create_hostgroup_id, execute_zabbix_host_save, push_device_to_zabbix
 
 logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
@@ -984,122 +984,30 @@ class ZabbixPushDeviceView(View):
             return redirect('plugins:netbox_zabbix:hosts')
 
         from dcim.models import Device
-        dev = Device.objects.filter(name=device_name).first()
+        dev = Device.objects.filter(name=device_name).select_related(
+            'role', 'primary_ip4', 'primary_ip6'
+        ).first()
         if not dev:
             messages.error(request, f"NetBox device '{device_name}' not found.")
             return redirect('plugins:netbox_zabbix:hosts')
 
-        nb_ip = None
-        if dev.primary_ip4:
-            nb_ip = str(dev.primary_ip4.address).split('/')[0]
-        elif dev.primary_ip6:
-            nb_ip = str(dev.primary_ip6.address).split('/')[0]
+        success, msg = push_device_to_zabbix(dev, reason="Manual Push from UI")
 
-        if not nb_ip:
-            messages.error(request, f"Device '{device_name}' has no Primary IP assigned.")
-            return redirect('plugins:netbox_zabbix:hosts')
-
-        role_name = dev.role.name if dev.role else None
-
-        api = ZabbixAPI()
-
-        hostgroup_id = get_or_create_hostgroup_id(api, role_name)
-
-        settings = get_role_zabbix_settings(role_name) if role_name else {}
-        mapped_tmpls = settings.get("templates", [])
-        tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
-
-        cf_data = getattr(dev, 'custom_field_data', {}) or {}
-
-        if_type_str = settings.get("interface_type") or "SNMP"
-        if if_type_str == "Agent":
-            if_type_num = 1
-            port_num = "10050"
-            details_payload = None
-            snmp_ver_name = "Agent"
-        elif if_type_str == "IPMI":
-            if_type_num = 3
-            port_num = "623"
-            details_payload = None
-            snmp_ver_name = "IPMI"
-        elif if_type_str == "JMX":
-            if_type_num = 4
-            port_num = "12345"
-            details_payload = None
-            snmp_ver_name = "JMX"
+        if success:
+            messages.success(request, f"✅ Successfully pushed '{device_name}' to Zabbix! ({msg})")
         else:
-            if_type_num = 2
-            port_num = "161"
-            details_payload, _, snmp_ver_name = build_snmp_details(cf_data)
-
-        if_payload = {
-            "type": if_type_num,
-            "main": 1,
-            "useip": 1,
-            "ip": nb_ip,
-            "dns": "",
-            "port": port_num
-        }
-        if details_payload:
-            if_payload["details"] = details_payload
-
-        # Send strictly ONLY the selected interface type
-        interfaces_list = [if_payload]
-
-        proxy_id = str(settings.get("proxy_id") or "0")
-
-        existing = api.call("host.get", {
-            "filter": {"host": device_name},
-            "selectInterfaces": ["interfaceid", "type", "main", "ip", "port"]
-        })
-        if not (isinstance(existing, list) and len(existing) > 0):
-            existing = api.call("host.get", {
-                "filter": {"name": device_name},
-                "selectInterfaces": ["interfaceid", "type", "main", "ip", "port"]
-            })
-
-        if isinstance(existing, list) and len(existing) > 0:
-            hid = existing[0].get("hostid")
-            existing_ifaces = existing[0].get("interfaces", [])
-            if isinstance(existing_ifaces, list) and len(existing_ifaces) > 0:
-                main_iface = existing_ifaces[0]
-                for ifc in existing_ifaces:
-                    if str(ifc.get("main")) == "1":
-                        main_iface = ifc
-                        break
-                if "interfaceid" in main_iface:
-                    if_payload["interfaceid"] = main_iface["interfaceid"]
-
-            upd_params = {
-                "hostid": hid,
-                "groups": [{"groupid": hostgroup_id}],
-                "interfaces": interfaces_list
-            }
-            if tmpl_payload:
-                upd_params["templates"] = tmpl_payload
-
-            res = execute_zabbix_host_save(api, True, upd_params, proxy_id)
-            if isinstance(res, dict) and "error" in res:
-                messages.error(request, f"Failed to update device '{device_name}' in Zabbix: {res['error']}")
+            # User-friendly error messages based on guard condition
+            if "No Primary IP" in msg:
+                messages.error(request, f"❌ Cannot push '{device_name}': No Primary IP assigned in NetBox.")
+            elif "No Zabbix settings" in msg:
+                messages.error(request, f"❌ Cannot push '{device_name}': No Zabbix settings configured for its role. Go to Host Groups → Add Zabbix Settings.")
+            elif "SNMP type configured but no SNMP" in msg:
+                messages.error(request, f"❌ Cannot push '{device_name}': SNMP interface selected but no SNMP Community or SNMPv3 credentials set on the device.")
             else:
-                messages.success(request, f"Successfully updated device '{device_name}' in Zabbix ({if_type_str}) with {len(mapped_tmpls)} template(s)!")
-        else:
-            create_params = {
-                "host": device_name,
-                "name": device_name,
-                "interfaces": interfaces_list,
-                "groups": [{"groupid": hostgroup_id}]
-            }
-            if tmpl_payload:
-                create_params["templates"] = tmpl_payload
-
-            res = execute_zabbix_host_save(api, False, create_params, proxy_id)
-            if isinstance(res, dict) and "error" in res:
-                messages.error(request, f"Failed to push device '{device_name}' to Zabbix: {res['error']}")
-            else:
-                messages.success(request, f"Successfully pushed device '{device_name}' (IP: {nb_ip}) to Zabbix as {if_type_str} with {len(mapped_tmpls)} template(s)!")
+                messages.error(request, f"❌ Failed to push '{device_name}' to Zabbix: {msg}")
 
         return redirect('plugins:netbox_zabbix:hosts')
+
 
 
 class ZabbixSyncRoleView(View):

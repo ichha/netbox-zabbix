@@ -12,6 +12,8 @@ class NetBoxZabbixConfig(PluginConfig):
         super().ready()
         try:
             import netbox_zabbix.signals  # noqa: F401
+            from netbox_zabbix.signals import connect_zabbix_settings_signal
+            connect_zabbix_settings_signal()
         except Exception:
             pass
 
