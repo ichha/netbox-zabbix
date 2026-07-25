@@ -241,6 +241,13 @@ def push_device_to_zabbix(device, reason=""):
     interfaces_list = [if_payload]
     tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
 
+    # Determine Zabbix host status from NetBox device status
+    # status=0 → Monitored (Enabled), status=1 → Unmonitored (Disabled)
+    nb_status = str(getattr(device.status, 'value', None) or getattr(device, 'status', 'active') or 'active').lower()
+    zabbix_status = 0 if nb_status == 'active' else 1
+    status_label = "Monitored" if zabbix_status == 0 else f"Disabled (NetBox status: {nb_status})"
+    logger.info(f"[Zabbix] '{device_name}': NetBox status='{nb_status}' → Zabbix status={zabbix_status} ({status_label})")
+
     # Execute push
     try:
         api = ZabbixAPI()
@@ -271,7 +278,8 @@ def push_device_to_zabbix(device, reason=""):
             upd_params = {
                 "hostid": hid,
                 "groups": [{"groupid": hostgroup_id}],
-                "interfaces": interfaces_list
+                "interfaces": interfaces_list,
+                "status": zabbix_status
             }
             if tmpl_payload:
                 upd_params["templates"] = tmpl_payload
@@ -283,7 +291,8 @@ def push_device_to_zabbix(device, reason=""):
                 "host": device_name,
                 "name": device_name,
                 "interfaces": interfaces_list,
-                "groups": [{"groupid": hostgroup_id}]
+                "groups": [{"groupid": hostgroup_id}],
+                "status": zabbix_status
             }
             if tmpl_payload:
                 create_params["templates"] = tmpl_payload
