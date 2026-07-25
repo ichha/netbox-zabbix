@@ -622,15 +622,44 @@
                                             </select>
                                         </div>
 
-                                        <!-- 3. Monitored By (Server / Proxy) -->
+                                        <!-- 3. Monitored By (Server / Proxy / Proxy Group) -->
                                         <div class="col-md-6">
-                                            <label class="form-label fw-bold fs-7 text-dark mb-1">Monitored By (Server / Proxy):</label>
-                                            <select name="proxy_id" class="form-select form-select-sm no-tomselect">
-                                                {% for px in all_proxies %}
-                                                    <option value="{{ px.proxyid }}" {% if px.proxyid == cell.proxy_id or not cell.proxy_id and px.proxyid == "0" %}selected{% endif %}>
-                                                        {{ px.name }}
+                                            <label class="form-label fw-bold fs-7 text-dark mb-1">Monitored By (Server / Proxy / Proxy Group):</label>
+                                            <select name="proxy_id" id="proxy_select_{{ cell.role_slug }}" class="form-select form-select-sm proxy-tomselect">
+                                                <!-- Server Option -->
+                                                <optgroup label="🖥️ Server">
+                                                    <option value="0" {% if not cell.proxy_id or cell.proxy_id == "0" %}selected{% endif %}>
+                                                        Server (Direct Connection)
                                                     </option>
+                                                </optgroup>
+                                                <!-- Proxies -->
+                                                {% with has_proxy=False %}
+                                                {% for px in all_proxies %}
+                                                    {% if not px.proxyid == "0" and not px.proxyid|slice:":6" == "group_" %}
+                                                        {% if forloop.first or forloop.counter == 1 %}
+                                                        {% endif %}
+                                                    {% endif %}
                                                 {% endfor %}
+                                                {% endwith %}
+                                                <optgroup label="🔁 Proxies">
+                                                    {% for px in all_proxies %}
+                                                        {% if not px.proxyid == "0" and not px.proxyid|slice:":6" == "group_" %}
+                                                            <option value="{{ px.proxyid }}" {% if px.proxyid == cell.proxy_id %}selected{% endif %}>
+                                                                {{ px.name }} [ID: {{ px.proxyid }}]
+                                                            </option>
+                                                        {% endif %}
+                                                    {% endfor %}
+                                                </optgroup>
+                                                <!-- Proxy Groups -->
+                                                <optgroup label="🗂️ Proxy Groups">
+                                                    {% for px in all_proxies %}
+                                                        {% if px.proxyid|slice:":6" == "group_" %}
+                                                            <option value="{{ px.proxyid }}" {% if px.proxyid == cell.proxy_id %}selected{% endif %}>
+                                                                {{ px.name }} [ID: {{ px.proxyid|slice:"6:" }}]
+                                                            </option>
+                                                        {% endif %}
+                                                    {% endfor %}
+                                                </optgroup>
                                             </select>
                                         </div>
                                     </div>
@@ -662,12 +691,48 @@
 <script>
 document.addEventListener("DOMContentLoaded", function() {
     if (typeof TomSelect !== 'undefined') {
-        document.querySelectorAll('select.tom-select:not(.no-tomselect)').forEach(function(el) {
+        // Template multi-select
+        document.querySelectorAll('select.tom-select:not(.no-tomselect):not(.proxy-tomselect)').forEach(function(el) {
             if (!el.tomselect) {
                 new TomSelect(el, {
                     plugins: ['remove_button'],
                     persist: false,
                     create: false
+                });
+            }
+        });
+
+        // Proxy / Proxy Group single-select with search
+        document.querySelectorAll('select.proxy-tomselect').forEach(function(el) {
+            if (!el.tomselect) {
+                new TomSelect(el, {
+                    persist: false,
+                    create: false,
+                    allowEmptyOption: false,
+                    placeholder: 'Select Server, Proxy, or Proxy Group...',
+                    render: {
+                        option: function(data, escape) {
+                            var icon = '🖥️';
+                            var color = '#6c757d';
+                            if (data.value && data.value.startsWith('group_')) {
+                                icon = '🗂️';
+                                color = '#6f42c1';
+                            } else if (data.value && data.value !== '0') {
+                                icon = '🔁';
+                                color = '#0d6efd';
+                            }
+                            return '<div style="color:' + color + '; font-size:0.88rem;">' + icon + ' ' + escape(data.text) + '</div>';
+                        },
+                        item: function(data, escape) {
+                            var icon = '🖥️';
+                            if (data.value && data.value.startsWith('group_')) {
+                                icon = '🗂️';
+                            } else if (data.value && data.value !== '0') {
+                                icon = '🔁';
+                            }
+                            return '<div>' + icon + ' ' + escape(data.text) + '</div>';
+                        }
+                    }
                 });
             }
         });
