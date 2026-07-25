@@ -134,6 +134,47 @@ def apply_monitoring_mode(params, proxy_id_str):
         params.pop("proxy_groupid", None)
 
 
+def build_zabbix_tags(device):
+    """
+    Extract tags from device's site and device itself for Zabbix host tags.
+    If tag name is in format 'Key:Value' (e.g. 'IMU:Attariya'),
+    maps to {'tag': 'IMU', 'value': 'Attariya'}.
+    If tag name has no colon, maps to {'tag': tag_name, 'value': ''}.
+    """
+    tags_payload = []
+    seen = set()
+
+    tags_sources = []
+    site = getattr(device, 'site', None)
+    if site and hasattr(site, 'tags'):
+        tags_sources.extend(list(site.tags.all()))
+    if hasattr(device, 'tags'):
+        tags_sources.extend(list(device.tags.all()))
+
+    for tag_obj in tags_sources:
+        tag_name_str = getattr(tag_obj, 'name', str(tag_obj)).strip()
+        if not tag_name_str:
+            continue
+
+        if ':' in tag_name_str:
+            t_key, t_val = tag_name_str.split(':', 1)
+            t_key = t_key.strip()
+            t_val = t_val.strip()
+        else:
+            t_key = tag_name_str
+            t_val = ""
+
+        if not t_key:
+            continue
+
+        key_tuple = (t_key, t_val)
+        if key_tuple not in seen:
+            seen.add(key_tuple)
+            tags_payload.append({"tag": t_key, "value": t_val})
+
+    return tags_payload
+
+
 def execute_zabbix_host_save(api, is_update, params, proxy_id_str):
     """
     Executes host.create or host.update strictly preserving configured interfaces.
@@ -249,6 +290,7 @@ def push_device_to_zabbix(device, reason=""):
 
     interfaces_list = [if_payload]
     tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
+    tags_payload = build_zabbix_tags(device)
 
     # Determine Zabbix host status from NetBox device status
     # status=0 → Monitored (Enabled), status=1 → Unmonitored (Disabled)
@@ -288,7 +330,8 @@ def push_device_to_zabbix(device, reason=""):
                 "hostid": hid,
                 "groups": [{"groupid": hostgroup_id}],
                 "interfaces": interfaces_list,
-                "status": zabbix_status
+                "status": zabbix_status,
+                "tags": tags_payload
             }
             if tmpl_payload:
                 upd_params["templates"] = tmpl_payload
@@ -301,7 +344,8 @@ def push_device_to_zabbix(device, reason=""):
                 "name": device_name,
                 "interfaces": interfaces_list,
                 "groups": [{"groupid": hostgroup_id}],
-                "status": zabbix_status
+                "status": zabbix_status,
+                "tags": tags_payload
             }
             if tmpl_payload:
                 create_params["templates"] = tmpl_payload

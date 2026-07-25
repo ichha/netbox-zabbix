@@ -1085,7 +1085,7 @@ class ZabbixBulkPushView(View):
         from dcim.models import Device
         from .signals import push_device_to_zabbix
         from .template_storage import get_role_zabbix_settings
-        from .signals import build_snmp_details, get_or_create_hostgroup_id, execute_zabbix_host_save
+        from .signals import build_snmp_details, get_or_create_hostgroup_id, execute_zabbix_host_save, build_zabbix_tags
         
         action = request.POST.get('action', 'push')
         
@@ -1111,10 +1111,10 @@ class ZabbixBulkPushView(View):
         api = ZabbixAPI()
         hostgroup_id = get_or_create_hostgroup_id(api, role_name)
         
-        # Fetch ALL devices for this role
+        # Fetch ALL devices for this role with site and tags prefetched
         devices = list(Device.objects.filter(role__name=role_name).select_related(
-            'role', 'primary_ip4', 'primary_ip6'
-        ))
+            'role', 'site', 'primary_ip4', 'primary_ip6'
+        ).prefetch_related('site__tags', 'tags'))
         
         # Determine interface type numbers
         if if_type_str == 'Agent':
@@ -1178,6 +1178,9 @@ class ZabbixBulkPushView(View):
             nb_status = str(getattr(device.status, 'value', None) or getattr(device, 'status', 'active') or 'active').lower()
             zabbix_status = 0 if nb_status == 'active' else 1
             
+            # Build tags from device site and device
+            tags_payload = build_zabbix_tags(device)
+
             # Build interface
             if_payload = {
                 'type': if_type_num,
@@ -1207,7 +1210,8 @@ class ZabbixBulkPushView(View):
                     'hostid': hid,
                     'groups': [{'groupid': hostgroup_id}],
                     'interfaces': [if_payload],
-                    'status': zabbix_status
+                    'status': zabbix_status,
+                    'tags': tags_payload
                 }
                 if tmpl_payload:
                     upd['templates'] = tmpl_payload
@@ -1218,7 +1222,8 @@ class ZabbixBulkPushView(View):
                     'name': device_name,
                     'interfaces': [if_payload],
                     'groups': [{'groupid': hostgroup_id}],
-                    'status': zabbix_status
+                    'status': zabbix_status,
+                    'tags': tags_payload
                 }
                 if tmpl_payload:
                     crt['templates'] = tmpl_payload
