@@ -402,59 +402,55 @@
                                             </button>
                                         </form>
 
-                                    <!-- ZABBIX SETTINGS CELL IN HOST GROUPS PAGE -->
+                                    <!-- ZABBIX SETTINGS CELL IN HOST GROUPS PAGE (COMPACT SINGLE-ROW BADGES) -->
                                     {% elif cell.type == "mapped_settings" or cell.type == "mapped_templates" %}
                                         <div class="d-flex align-items-center justify-content-between gap-2">
-                                            <div class="d-flex flex-column gap-1 align-items-start my-1">
-                                                {% if cell.interface_type or cell.proxy_name %}
-                                                    <!-- Interface Type & Proxy Badges (Individually Removable) -->
-                                                    <div class="d-flex flex-wrap gap-1 align-items-center mb-1">
-                                                        {% if cell.interface_type %}
-                                                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold d-inline-flex align-items-center gap-1" style="font-size: 0.75rem;">
-                                                                <i class="mdi mdi-lan me-1"></i>Type: {{ cell.interface_type }}
-                                                                <form action="{% url 'plugins:netbox_zabbix:remove_setting_field' %}" method="post" class="d-inline m-0 p-0 ms-1">
-                                                                    {% csrf_token %}
-                                                                    <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
-                                                                    <input type="hidden" name="field_name" value="interface_type" />
-                                                                    <button type="submit" class="btn p-0 border-0 text-muted opacity-75 hover-opacity-100" style="line-height: 1; font-size: 0.75rem;" title="Remove Interface Type setting">
-                                                                        &times;
-                                                                    </button>
-                                                                </form>
-                                                            </span>
-                                                        {% endif %}
-
-                                                        {% if cell.proxy_name %}
-                                                            <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle fw-semibold d-inline-flex align-items-center gap-1" style="font-size: 0.75rem;">
-                                                                <i class="mdi mdi-server-network me-1"></i>{{ cell.proxy_name }}
-                                                                <form action="{% url 'plugins:netbox_zabbix:remove_setting_field' %}" method="post" class="d-inline m-0 p-0 ms-1">
-                                                                    {% csrf_token %}
-                                                                    <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
-                                                                    <input type="hidden" name="field_name" value="proxy" />
-                                                                    <button type="submit" class="btn p-0 border-0 text-muted opacity-75 hover-opacity-100" style="line-height: 1; font-size: 0.75rem;" title="Remove Monitored By setting">
-                                                                        &times;
-                                                                    </button>
-                                                                </form>
-                                                            </span>
-                                                        {% endif %}
-                                                    </div>
+                                            <div class="d-flex flex-wrap gap-1 align-items-center my-1" style="max-width: 550px;">
+                                                {% if cell.interface_type %}
+                                                    <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle fw-semibold d-inline-flex align-items-center gap-1" style="font-size: 0.72rem; padding: 3px 6px;">
+                                                        <i class="mdi mdi-lan me-1"></i>Type: {{ cell.interface_type }}
+                                                        <form action="{% url 'plugins:netbox_zabbix:remove_setting_field' %}" method="post" class="d-inline m-0 p-0 ms-1">
+                                                            {% csrf_token %}
+                                                            <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
+                                                            <input type="hidden" name="field_name" value="interface_type" />
+                                                            <button type="submit" class="btn p-0 border-0 text-muted opacity-75 hover-opacity-100" style="line-height: 1; font-size: 0.72rem;" title="Remove Interface Type setting">
+                                                                &times;
+                                                            </button>
+                                                        </form>
+                                                    </span>
                                                 {% endif %}
 
-                                                <!-- Templates Badges (Individually Removable) -->
+                                                {% if cell.proxy_name %}
+                                                    <span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle fw-semibold d-inline-flex align-items-center gap-1" style="font-size: 0.72rem; padding: 3px 6px;">
+                                                        <i class="mdi mdi-server-network me-1"></i>{{ cell.proxy_name }}
+                                                        <form action="{% url 'plugins:netbox_zabbix:remove_setting_field' %}" method="post" class="d-inline m-0 p-0 ms-1">
+                                                            {% csrf_token %}
+                                                            <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
+                                                            <input type="hidden" name="field_name" value="proxy" />
+                                                            <button type="submit" class="btn p-0 border-0 text-muted opacity-75 hover-opacity-100" style="line-height: 1; font-size: 0.72rem;" title="Remove Monitored By setting">
+                                                                &times;
+                                                            </button>
+                                                        </form>
+                                                    </span>
+                                                {% endif %}
+
                                                 {% if cell.templates %}
                                                     {% for t in cell.templates %}
-                                                        <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm" style="font-size: 0.82rem; padding: 4px 10px; border-radius: 4px;">
+                                                        <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm" style="font-size: 0.75rem; padding: 3px 6px; border-radius: 4px;">
                                                             <i class="mdi mdi-file-document-outline text-primary me-1"></i> {{ t.name }}
                                                             <form action="{% url 'plugins:netbox_zabbix:remove_template' %}" method="post" class="d-inline m-0 p-0">
                                                                 {% csrf_token %}
                                                                 <input type="hidden" name="role_name" value="{{ cell.role_name }}" />
                                                                 <input type="hidden" name="template_id" value="{{ t.id }}" />
-                                                                <button type="submit" class="btn p-0 border-0 text-muted opacity-75 hover-opacity-100 ms-1" style="line-height: 1; font-size: 0.75rem;" title="Remove {{ t.name }}">
+                                                                <button type="submit" class="btn p-0 border-0 text-muted opacity-75 hover-opacity-100 ms-1" style="line-height: 1; font-size: 0.72rem;" title="Remove {{ t.name }}">
                                                                     &times;
                                                                 </button>
                                                             </form>
                                                         </span>
                                                     {% endfor %}
-                                                {% elif not cell.interface_type and not cell.proxy_name %}
+                                                {% endif %}
+
+                                                {% if not cell.interface_type and not cell.proxy_name and not cell.templates %}
                                                     <span class="text-muted small">&mdash; No Settings &mdash;</span>
                                                 {% endif %}
                                             </div>
@@ -665,7 +661,6 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", function() {
-    // Initialize TomSelect ONLY on select.tom-select elements (ignoring .no-tomselect)
     if (typeof TomSelect !== 'undefined') {
         document.querySelectorAll('select.tom-select:not(.no-tomselect)').forEach(function(el) {
             if (!el.tomselect) {
