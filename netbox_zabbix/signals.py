@@ -133,6 +133,7 @@ def apply_monitoring_mode(params, proxy_id_str):
 def execute_zabbix_host_save(api, is_update, params, proxy_id_str):
     """
     Executes host.create or host.update with Zabbix 7.0 schema compliance and version fallbacks.
+    Automatically resolves missing interface dependencies required by attached templates.
     """
     apply_monitoring_mode(params, proxy_id_str)
     method = "host.update" if is_update else "host.create"
@@ -140,8 +141,33 @@ def execute_zabbix_host_save(api, is_update, params, proxy_id_str):
 
     if isinstance(res, dict) and "error" in res:
         err_msg = str(res["error"])
-        logger.warning(f"[Zabbix Signal API Warning] {method} payload failed: {err_msg}. Retrying with legacy parameters...")
-        
+        logger.warning(f"[Zabbix Signal API Warning] {method} payload failed: {err_msg}. Retrying...")
+
+        # 1. If error is due to an attached SNMP template requiring an SNMP interface
+        if "interface of type" in err_msg.lower() or "snmp" in err_msg.lower():
+            has_snmp_if = any(str(ifc.get("type")) == "2" for ifc in params.get("interfaces", []))
+            if not has_snmp_if:
+                ip_addr = params["interfaces"][0]["ip"] if params.get("interfaces") else "0.0.0.0"
+                snmp_if = {
+                    "type": 2,
+                    "main": 1,
+                    "useip": 1,
+                    "ip": ip_addr,
+                    "dns": "",
+                    "port": "161",
+                    "details": {
+                        "version": 2,
+                        "community": "{$SNMP_COMMUNITY}",
+                        "bulk": 1,
+                        "max_repetitions": 10
+                    }
+                }
+                params["interfaces"].append(snmp_if)
+                res = api.call(method, params)
+                if not (isinstance(res, dict) and "error" in res):
+                    return res
+
+        # 2. Fallback for older Zabbix versions (Zabbix 6.0/6.4)
         clean_params = dict(params)
         clean_params.pop("monitored_by", None)
         clean_params.pop("proxy_groupid", None)
@@ -290,7 +316,6 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
         if details_payload:
             if_payload["details"] = details_payload
 
-        # Send strictly ONLY the selected interface type
         interfaces_list = [if_payload]
 
         # 4. Monitored By (Server / Proxy / Proxy Group)
