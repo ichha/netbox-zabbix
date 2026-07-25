@@ -1043,23 +1043,8 @@ class ZabbixPushDeviceView(View):
         if details_payload:
             if_payload["details"] = details_payload
 
+        # Send strictly ONLY the selected interface type
         interfaces_list = [if_payload]
-
-        if if_type_str == "Agent":
-            has_snmp_cf = bool(cf_data.get('snmp_community') or cf_data.get('security_name') or cf_data.get('security_level'))
-            has_templates = bool(tmpl_payload)
-            if has_snmp_cf or has_templates:
-                snmp_details, _, _ = build_snmp_details(cf_data)
-                snmp_if_payload = {
-                    "type": 2,
-                    "main": 1,
-                    "useip": 1,
-                    "ip": nb_ip,
-                    "dns": "",
-                    "port": "161",
-                    "details": snmp_details
-                }
-                interfaces_list.append(snmp_if_payload)
 
         proxy_id = str(settings.get("proxy_id") or "0")
 
