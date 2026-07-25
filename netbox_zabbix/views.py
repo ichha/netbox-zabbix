@@ -12,6 +12,7 @@ from .template_storage import (
     remove_role_zabbix_settings,
     remove_role_setting_field
 )
+from .signals import build_snmp_details
 
 logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
@@ -667,7 +668,7 @@ class ZabbixHostsView(View):
         else:
             filtered_devs = all_devices_list
             matched_count = sum(1 for dev in all_devices_list if is_dev_matched(dev))
-            mismatch_count = total_devices - matched_count
+            mismatch_count = total_devices - mismatch_count
 
         filtered_count = len(filtered_devs)
 
@@ -991,9 +992,30 @@ class ZabbixPushDeviceView(View):
         mapped_tmpls = settings.get("templates", [])
         tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
 
+        cf_data = getattr(dev, 'custom_field_data', {}) or {}
+        snmp_details, detected_type_num, snmp_ver_name = build_snmp_details(cf_data)
+
         if_type_str = settings.get("interface_type") or "SNMP"
-        if_type_num = 2 if if_type_str == 'SNMP' else 1 if if_type_str == 'Agent' else 3 if if_type_str == 'IPMI' else 4 if if_type_str == 'JMX' else 2
-        port_num = "161" if if_type_num == 2 else "10050" if if_type_num == 1 else "623" if if_type_num == 3 else "12345"
+        if if_type_str == "SNMP":
+            if_type_num = 2
+            port_num = "161"
+            details_payload = snmp_details
+        elif if_type_str == "Agent":
+            if_type_num = 1
+            port_num = "10050"
+            details_payload = None
+        elif if_type_str == "IPMI":
+            if_type_num = 3
+            port_num = "623"
+            details_payload = None
+        elif if_type_str == "JMX":
+            if_type_num = 4
+            port_num = "12345"
+            details_payload = None
+        else:
+            if_type_num = 2
+            port_num = "161"
+            details_payload = snmp_details
 
         if_payload = {
             "type": if_type_num,
@@ -1003,13 +1025,8 @@ class ZabbixPushDeviceView(View):
             "dns": "",
             "port": port_num
         }
-        if if_type_num == 2:
-            if_payload["details"] = {
-                "version": 2,
-                "community": "{$SNMP_COMMUNITY}",
-                "bulk": 1,
-                "max_repetitions": 10
-            }
+        if details_payload:
+            if_payload["details"] = details_payload
 
         proxy_id = str(settings.get("proxy_id") or "0")
 
@@ -1033,7 +1050,7 @@ class ZabbixPushDeviceView(View):
             if isinstance(res, dict) and "error" in res:
                 messages.error(request, f"Failed to update device '{device_name}' in Zabbix: {res['error']}")
             else:
-                messages.success(request, f"Successfully updated device '{device_name}' in Zabbix with {len(mapped_tmpls)} template(s) and {if_type_str} interface!")
+                messages.success(request, f"Successfully updated device '{device_name}' in Zabbix ({snmp_ver_name}) with {len(mapped_tmpls)} template(s)!")
         else:
             create_params = {
                 "host": device_name,
@@ -1051,7 +1068,7 @@ class ZabbixPushDeviceView(View):
             if isinstance(res, dict) and "error" in res:
                 messages.error(request, f"Failed to push device '{device_name}' to Zabbix: {res['error']}")
             else:
-                messages.success(request, f"Successfully pushed device '{device_name}' (IP: {nb_ip}) to Zabbix as {if_type_str} with {len(mapped_tmpls)} template(s)!")
+                messages.success(request, f"Successfully pushed device '{device_name}' (IP: {nb_ip}) to Zabbix as {if_type_str} ({snmp_ver_name}) with {len(mapped_tmpls)} template(s)!")
 
         return redirect('plugins:netbox_zabbix:hosts')
 
