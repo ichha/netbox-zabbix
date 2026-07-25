@@ -86,6 +86,62 @@ def build_snmp_details(cf_data):
         return details, 2, "SNMPv2c (Default)"
 
 
+def get_or_create_hostgroup_id(api, role_name):
+    """
+    Case-insensitive lookup for Zabbix Host Group ID by role_name.
+    Creates Host Group if it doesn't exist.
+    """
+    if not role_name:
+        return "2"
+
+    all_groups = api.get_host_groups()
+    if isinstance(all_groups, list):
+        for g in all_groups:
+            if g.get("name", "").strip().lower() == role_name.strip().lower():
+                return g.get("groupid")
+
+    res = api.call("hostgroup.create", {"name": role_name})
+    if isinstance(res, dict) and "groupids" in res and len(res["groupids"]) > 0:
+        return res["groupids"][0]
+
+    if isinstance(all_groups, list) and len(all_groups) > 0:
+        return all_groups[0].get("groupid")
+    return "2"
+
+
+def execute_zabbix_host_save(api, is_update, params, proxy_id_str):
+    """
+    Executes host.create or host.update with automatic schema version fallbacks.
+    """
+    method = "host.update" if is_update else "host.create"
+    res = api.call(method, params)
+
+    if isinstance(res, dict) and "error" in res:
+        err_msg = str(res["error"])
+        logger.warning(f"[Zabbix Signal API Warning] {method} primary payload failed: {err_msg}. Trying compatibility payload...")
+        
+        # Fallback 1: Strip monitored_by / proxy_groupid for older Zabbix versions
+        clean_params = dict(params)
+        clean_params.pop("monitored_by", None)
+        clean_params.pop("proxy_groupid", None)
+        
+        if proxy_id_str and proxy_id_str != "0" and not proxy_id_str.startswith("group_"):
+            clean_params["proxyid"] = proxy_id_str
+        else:
+            clean_params["proxyid"] = "0"
+            
+        res = api.call(method, clean_params)
+
+        if isinstance(res, dict) and "error" in res:
+            # Fallback 2: Try without proxyid parameter entirely if Zabbix server
+            if proxy_id_str == "0" or not proxy_id_str:
+                clean_params.pop("proxyid", None)
+                clean_params.pop("proxy_hostid", None)
+                res = api.call(method, clean_params)
+
+    return res
+
+
 # ==========================================
 # DEVICE ROLE SIGNALS
 # ==========================================
@@ -114,10 +170,7 @@ def sync_device_role_to_zabbix_on_save(sender, instance, created, **kwargs):
     if created:
         logger.info(f"[Zabbix Signal] NetBox DeviceRole created: '{role_name}'. Creating Host Group in Zabbix...")
         try:
-            groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
-            if isinstance(groups, list) and len(groups) == 0:
-                res = api.call("hostgroup.create", {"name": role_name})
-                logger.info(f"[Zabbix Signal] Host Group '{role_name}' created in Zabbix: {res}")
+            get_or_create_hostgroup_id(api, role_name)
         except Exception as e:
             logger.error(f"[Zabbix Signal Error] Failed to auto-create Zabbix Host Group for '{role_name}': {e}")
     else:
@@ -125,13 +178,18 @@ def sync_device_role_to_zabbix_on_save(sender, instance, created, **kwargs):
         if old_name and old_name != role_name:
             logger.info(f"[Zabbix Signal] NetBox DeviceRole renamed from '{old_name}' to '{role_name}'. Updating Zabbix Host Group...")
             try:
-                groups = api.call("hostgroup.get", {"filter": {"name": old_name}})
-                if isinstance(groups, list) and len(groups) > 0:
-                    group_id = groups[0].get("groupid")
+                all_groups = api.get_host_groups()
+                group_id = None
+                if isinstance(all_groups, list):
+                    for g in all_groups:
+                        if g.get("name", "").strip().lower() == old_name.strip().lower():
+                            group_id = g.get("groupid")
+                            break
+                if group_id:
                     res = api.call("hostgroup.update", {"groupid": group_id, "name": role_name})
                     logger.info(f"[Zabbix Signal] Host Group updated in Zabbix: {res}")
                 else:
-                    api.call("hostgroup.create", {"name": role_name})
+                    get_or_create_hostgroup_id(api, role_name)
             except Exception as e:
                 logger.error(f"[Zabbix Signal Error] Failed to auto-update Zabbix Host Group for '{role_name}': {e}")
 
@@ -145,11 +203,14 @@ def sync_device_role_to_zabbix_on_delete(sender, instance, **kwargs):
     role_name = instance.name
     logger.info(f"[Zabbix Signal] NetBox DeviceRole deleted: '{role_name}'. Deleting Host Group from Zabbix...")
     try:
-        groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
-        if isinstance(groups, list) and len(groups) > 0:
-            group_id = groups[0].get("groupid")
-            res = api.call("hostgroup.delete", [group_id])
-            logger.info(f"[Zabbix Signal] Host Group deleted from Zabbix: {res}")
+        all_groups = api.get_host_groups()
+        if isinstance(all_groups, list):
+            for g in all_groups:
+                if g.get("name", "").strip().lower() == role_name.strip().lower():
+                    group_id = g.get("groupid")
+                    res = api.call("hostgroup.delete", [group_id])
+                    logger.info(f"[Zabbix Signal] Host Group deleted from Zabbix: {res}")
+                    break
     except Exception as e:
         logger.error(f"[Zabbix Signal Error] Failed to auto-delete Zabbix Host Group for '{role_name}': {e}")
 
@@ -183,27 +244,14 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
         role_name = instance.role.name if instance.role else None
 
         # 1. Host Group ID
-        hostgroup_id = None
-        if role_name:
-            groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
-            if isinstance(groups, list) and len(groups) > 0:
-                hostgroup_id = groups[0].get("groupid")
-            else:
-                create_grp = api.call("hostgroup.create", {"name": role_name})
-                if isinstance(create_grp, dict) and "groupids" in create_grp and len(create_grp["groupids"]) > 0:
-                    hostgroup_id = create_grp["groupids"][0]
-
-        if not hostgroup_id:
-            groups = api.call("hostgroup.get", {"output": ["groupid", "name"]})
-            if isinstance(groups, list) and len(groups) > 0:
-                hostgroup_id = groups[0].get("groupid")
-            else:
-                hostgroup_id = "2"
+        hostgroup_id = get_or_create_hostgroup_id(api, role_name)
 
         # 2. Configured Zabbix Settings for this Role
         settings = get_role_zabbix_settings(role_name) if role_name else {}
         mapped_tmpls = settings.get("templates", [])
         tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
+
+        cf_data = getattr(instance, 'custom_field_data', {}) or {}
 
         # 3. Determine Interface Type & Parameters
         if_type_str = settings.get("interface_type") or "SNMP"
@@ -223,10 +271,8 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
             details_payload = None
             snmp_ver_name = "JMX"
         else:
-            # Default to SNMP
             if_type_num = 2
             port_num = "161"
-            cf_data = getattr(instance, 'custom_field_data', {}) or {}
             details_payload, _, snmp_ver_name = build_snmp_details(cf_data)
 
         if_payload = {
@@ -239,6 +285,23 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
         }
         if details_payload:
             if_payload["details"] = details_payload
+
+        interfaces_list = [if_payload]
+
+        # If Agent mode, but SNMP community / v3 credentials exist, add SNMP interface as secondary
+        # so SNMP templates linked to the host will not throw Zabbix API interface errors
+        if if_type_str == "Agent" and (cf_data.get('snmp_community') or cf_data.get('security_name') or cf_data.get('security_level')):
+            snmp_details, _, _ = build_snmp_details(cf_data)
+            snmp_if_payload = {
+                "type": 2,
+                "main": 1,
+                "useip": 1,
+                "ip": nb_ip,
+                "dns": "",
+                "port": "161",
+                "details": snmp_details
+            }
+            interfaces_list.append(snmp_if_payload)
 
         # 4. Monitored By (Server / Proxy / Proxy Group)
         proxy_id = str(settings.get("proxy_id") or "0")
@@ -269,7 +332,7 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
             upd_params = {
                 "hostid": hid,
                 "groups": [{"groupid": hostgroup_id}],
-                "interfaces": [if_payload]
+                "interfaces": interfaces_list
             }
             if tmpl_payload:
                 upd_params["templates"] = tmpl_payload
@@ -285,13 +348,13 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
                 upd_params["monitored_by"] = 1
                 upd_params["proxyid"] = proxy_id
 
-            res = api.call("host.update", upd_params)
+            res = execute_zabbix_host_save(api, True, upd_params, proxy_id)
             logger.info(f"[Zabbix Signal] Host '{device_name}' updated in Zabbix: {res}")
         else:
             create_params = {
                 "host": device_name,
                 "name": device_name,
-                "interfaces": [if_payload],
+                "interfaces": interfaces_list,
                 "groups": [{"groupid": hostgroup_id}]
             }
             if tmpl_payload:
@@ -308,7 +371,7 @@ def sync_device_to_zabbix_on_save(sender, instance, created, **kwargs):
                 create_params["monitored_by"] = 1
                 create_params["proxyid"] = proxy_id
 
-            res = api.call("host.create", create_params)
+            res = execute_zabbix_host_save(api, False, create_params, proxy_id)
             logger.info(f"[Zabbix Signal] Host '{device_name}' created in Zabbix ({if_type_str}/{snmp_ver_name}): {res}")
 
     except Exception as e:

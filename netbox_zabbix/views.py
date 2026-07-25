@@ -12,7 +12,7 @@ from .template_storage import (
     remove_role_zabbix_settings,
     remove_role_setting_field
 )
-from .signals import build_snmp_details
+from .signals import build_snmp_details, get_or_create_hostgroup_id, execute_zabbix_host_save
 
 logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
@@ -551,16 +551,9 @@ class ZabbixCreateHostGroupView(View):
             
         api = ZabbixAPI()
         
-        groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
-        if isinstance(groups, list) and len(groups) > 0:
-            messages.info(request, f"Host Group '{role_name}' already exists in Zabbix.")
-            return redirect('plugins:netbox_zabbix:hostgroups')
-            
-        create_res = api.call("hostgroup.create", {"name": role_name})
-        if isinstance(create_res, dict) and "groupids" in create_res and len(create_res["groupids"]) > 0:
-            messages.success(request, f"Successfully created Host Group '{role_name}' in Zabbix (ID {create_res['groupids'][0]})!")
-        elif isinstance(create_res, dict) and "error" in create_res:
-            messages.error(request, f"Failed to create Host Group in Zabbix: {create_res['error']}")
+        group_id = get_or_create_hostgroup_id(api, role_name)
+        if group_id:
+            messages.success(request, f"Host Group '{role_name}' is ready in Zabbix (ID {group_id})!")
         else:
             messages.error(request, f"Unable to create Host Group '{role_name}' in Zabbix.")
             
@@ -1010,26 +1003,13 @@ class ZabbixPushDeviceView(View):
 
         api = ZabbixAPI()
 
-        hostgroup_id = None
-        if role_name:
-            groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
-            if isinstance(groups, list) and len(groups) > 0:
-                hostgroup_id = groups[0].get("groupid")
-            else:
-                create_grp = api.call("hostgroup.create", {"name": role_name})
-                if isinstance(create_grp, dict) and "groupids" in create_grp and len(create_grp["groupids"]) > 0:
-                    hostgroup_id = create_grp["groupids"][0]
-
-        if not hostgroup_id:
-            groups = api.call("hostgroup.get", {"output": ["groupid", "name"]})
-            if isinstance(groups, list) and len(groups) > 0:
-                hostgroup_id = groups[0].get("groupid")
-            else:
-                hostgroup_id = "2"
+        hostgroup_id = get_or_create_hostgroup_id(api, role_name)
 
         settings = get_role_zabbix_settings(role_name) if role_name else {}
         mapped_tmpls = settings.get("templates", [])
         tmpl_payload = [{"templateid": str(t["id"])} for t in mapped_tmpls]
+
+        cf_data = getattr(dev, 'custom_field_data', {}) or {}
 
         if_type_str = settings.get("interface_type") or "SNMP"
         if if_type_str == "Agent":
@@ -1050,7 +1030,6 @@ class ZabbixPushDeviceView(View):
         else:
             if_type_num = 2
             port_num = "161"
-            cf_data = getattr(dev, 'custom_field_data', {}) or {}
             details_payload, _, snmp_ver_name = build_snmp_details(cf_data)
 
         if_payload = {
@@ -1063,6 +1042,21 @@ class ZabbixPushDeviceView(View):
         }
         if details_payload:
             if_payload["details"] = details_payload
+
+        interfaces_list = [if_payload]
+
+        if if_type_str == "Agent" and (cf_data.get('snmp_community') or cf_data.get('security_name') or cf_data.get('security_level')):
+            snmp_details, _, _ = build_snmp_details(cf_data)
+            snmp_if_payload = {
+                "type": 2,
+                "main": 1,
+                "useip": 1,
+                "ip": nb_ip,
+                "dns": "",
+                "port": "161",
+                "details": snmp_details
+            }
+            interfaces_list.append(snmp_if_payload)
 
         proxy_id = str(settings.get("proxy_id") or "0")
 
@@ -1091,7 +1085,7 @@ class ZabbixPushDeviceView(View):
             upd_params = {
                 "hostid": hid,
                 "groups": [{"groupid": hostgroup_id}],
-                "interfaces": [if_payload]
+                "interfaces": interfaces_list
             }
             if tmpl_payload:
                 upd_params["templates"] = tmpl_payload
@@ -1107,7 +1101,7 @@ class ZabbixPushDeviceView(View):
                 upd_params["monitored_by"] = 1
                 upd_params["proxyid"] = proxy_id
 
-            res = api.call("host.update", upd_params)
+            res = execute_zabbix_host_save(api, True, upd_params, proxy_id)
             if isinstance(res, dict) and "error" in res:
                 messages.error(request, f"Failed to update device '{device_name}' in Zabbix: {res['error']}")
             else:
@@ -1116,7 +1110,7 @@ class ZabbixPushDeviceView(View):
             create_params = {
                 "host": device_name,
                 "name": device_name,
-                "interfaces": [if_payload],
+                "interfaces": interfaces_list,
                 "groups": [{"groupid": hostgroup_id}]
             }
             if tmpl_payload:
@@ -1133,7 +1127,7 @@ class ZabbixPushDeviceView(View):
                 create_params["monitored_by"] = 1
                 create_params["proxyid"] = proxy_id
 
-            res = api.call("host.create", create_params)
+            res = execute_zabbix_host_save(api, False, create_params, proxy_id)
             if isinstance(res, dict) and "error" in res:
                 messages.error(request, f"Failed to push device '{device_name}' to Zabbix: {res['error']}")
             else:
@@ -1153,19 +1147,7 @@ class ZabbixSyncRoleView(View):
             
         api = ZabbixAPI()
         
-        groups = api.call("hostgroup.get", {"filter": {"name": role_name}})
-        group_id = None
-        
-        if isinstance(groups, list) and len(groups) > 0:
-            group_id = groups[0].get("groupid")
-        else:
-            create_res = api.call("hostgroup.create", {"name": role_name})
-            if isinstance(create_res, dict) and "groupids" in create_res and len(create_res["groupids"]) > 0:
-                group_id = create_res["groupids"][0]
-            elif isinstance(create_res, dict) and "error" in create_res:
-                messages.error(request, f"Failed to create Zabbix Host Group '{role_name}': {create_res['error']}")
-                return redirect('plugins:netbox_zabbix:hosts')
-                
+        group_id = get_or_create_hostgroup_id(api, role_name)
         if not group_id:
             messages.error(request, f"Could not create or find Zabbix Host Group '{role_name}'.")
             return redirect('plugins:netbox_zabbix:hosts')
