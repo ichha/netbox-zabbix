@@ -487,7 +487,34 @@ class ZabbixMapTemplatesView(View):
 
         save_mapped_templates(role_name, template_ids, template_names, interface_type, proxy_id, proxy_name)
 
-        messages.success(request, f"Successfully saved Zabbix Settings for '{role_name}'!")
+        # If Auto-Sync is ON, trigger push and surface any Zabbix API errors directly to the user
+        from .models import ZabbixSyncState
+        if ZabbixSyncState.is_enabled():
+            from dcim.models import Device
+            from .signals import push_device_to_zabbix
+            devices = list(Device.objects.filter(role__name=role_name).select_related(
+                'role', 'site', 'primary_ip4', 'primary_ip6'
+            ).prefetch_related('site__tags', 'tags'))
+            
+            pushed_count = 0
+            failed_msgs = []
+            for dev in devices:
+                ok, msg = push_device_to_zabbix(dev, reason=f"Settings updated for role '{role_name}'")
+                if ok:
+                    pushed_count += 1
+                else:
+                    failed_msgs.append(f"{dev.name}: {msg}")
+            
+            if failed_msgs:
+                messages.warning(
+                    request, 
+                    f"Saved settings for '{role_name}'. Pushed {pushed_count}/{len(devices)} device(s). Zabbix feedback: {'; '.join(failed_msgs[:3])}"
+                )
+            else:
+                messages.success(request, f"Successfully saved Zabbix Settings and updated {pushed_count} device(s) in Zabbix for '{role_name}'!")
+        else:
+            messages.success(request, f"Successfully saved Zabbix Settings for '{role_name}'. (Auto-Sync is OFF — use Bulk Push to apply).")
+
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
