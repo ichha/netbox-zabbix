@@ -85,92 +85,214 @@
 
 </div>
 
-<!-- Result Modal -->
-<div class="modal fade" id="bulkResultModal" tabindex="-1" aria-hidden="true">
+<!-- Progress & Result Modal -->
+<div class="modal fade" id="bulkResultModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
       <div class="modal-header bg-primary text-white">
-        <h5 class="modal-title"><i class="mdi mdi-cloud-check me-2"></i>Bulk Push Result</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        <h5 class="modal-title" id="modalTitle"><i class="mdi mdi-cloud-upload me-2"></i>Pushing Devices to Zabbix...</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" id="modalCloseBtn"></button>
       </div>
-      <div class="modal-body" id="bulkResultBody">Loading...</div>
+      <div class="modal-body" id="bulkResultBody">
+        
+        <!-- Live Progress Section -->
+        <div id="progressSection">
+          <div class="d-flex align-items-center justify-content-between mb-1">
+            <span class="fw-bold text-dark" id="progressRoleName">Role Name</span>
+            <span class="badge bg-primary fs-6" id="progressPercent">0%</span>
+          </div>
+          <div class="progress mb-2" style="height:22px;">
+            <div id="bulkProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary fw-bold" role="progressbar" style="width: 0%;">0%</div>
+          </div>
+          <div id="bulkStatusText" class="text-muted small mb-3">
+            <i class="mdi mdi-loading mdi-spin me-1"></i>Initializing push...
+          </div>
+        </div>
+
+        <!-- Tally Cards -->
+        <div class="row g-2 mb-3">
+          <div class="col-6 col-md-3">
+            <div class="card border-0 bg-secondary-subtle text-center p-2">
+              <div class="fs-4 fw-bold" id="statTotal">0</div>
+              <div class="text-muted small">Total Devices</div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3">
+            <div class="card border-0 bg-success-subtle text-center p-2">
+              <div class="fs-4 fw-bold text-success" id="statCreated">0</div>
+              <div class="text-muted small">Created</div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3">
+            <div class="card border-0 bg-primary-subtle text-center p-2">
+              <div class="fs-4 fw-bold text-primary" id="statUpdated">0</div>
+              <div class="text-muted small">Updated</div>
+            </div>
+          </div>
+          <div class="col-6 col-md-3">
+            <div class="card border-0 bg-warning-subtle text-center p-2">
+              <div class="fs-4 fw-bold text-warning" id="statSkipped">0</div>
+              <div class="text-muted small">Skipped</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Notifications & Details Box -->
+        <div id="detailsBox"></div>
+
+      </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal" id="modalDoneBtn">Close</button>
       </div>
     </div>
   </div>
 </div>
 
 <script>
-const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 
-             '{{ csrf_token }}';
+const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '{{ csrf_token }}';
 
-function bulkPush(roleName, btn) {
+async function bulkPush(roleName, btn) {
   const originalHtml = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Pushing...';
   
-  const formData = new FormData();
-  formData.append('action', 'push');
-  formData.append('role_name', roleName);
-  formData.append('csrfmiddlewaretoken', CSRF);
+  const modalEl = document.getElementById('bulkResultModal');
+  const modal = new bootstrap.Modal(modalEl);
   
-  fetch('{% url "plugins:netbox_zabbix:bulk_push" %}', {
-    method: 'POST',
-    body: formData,
-    headers: {'X-Requested-With': 'XMLHttpRequest'}
-  })
-  .then(r => r.json())
-  .then(data => {
-    btn.disabled = false;
-    btn.innerHTML = originalHtml;
-    showResult(data);
-  })
-  .catch(err => {
-    btn.disabled = false;
-    btn.innerHTML = originalHtml;
-    showResult({success: false, error: String(err)});
-  });
-}
+  // Reset UI
+  document.getElementById('modalTitle').innerHTML = `<i class="mdi mdi-cloud-upload me-2"></i>Pushing Devices to Zabbix...`;
+  document.getElementById('progressRoleName').textContent = roleName;
+  document.getElementById('progressPercent').textContent = '0%';
+  const pBar = document.getElementById('bulkProgressBar');
+  pBar.style.width = '0%';
+  pBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary fw-bold';
+  pBar.textContent = '0%';
+  
+  document.getElementById('statTotal').textContent = '0';
+  document.getElementById('statCreated').textContent = '0';
+  document.getElementById('statUpdated').textContent = '0';
+  document.getElementById('statSkipped').textContent = '0';
+  document.getElementById('detailsBox').innerHTML = '';
+  document.getElementById('bulkStatusText').innerHTML = `<i class="mdi mdi-loading mdi-spin me-1"></i>Fetching device list for role <strong>${roleName}</strong>...`;
+  
+  modal.show();
 
-function showResult(data) {
-  const body = document.getElementById('bulkResultBody');
-  if (!data.success) {
-    body.innerHTML = `<div class="alert alert-danger"><i class="mdi mdi-alert-circle me-1"></i>${data.error || 'Unknown error'}</div>`;
-  } else {
-    body.innerHTML = `
-      <div class="row g-2 mb-3">
-        <div class="col-6 col-md-3">
-          <div class="card border-0 bg-secondary-subtle text-center p-2">
-            <div class="fs-3 fw-bold">${data.total}</div>
-            <div class="text-muted small">Total Devices</div>
-          </div>
-        </div>
-        <div class="col-6 col-md-3">
-          <div class="card border-0 bg-success-subtle text-center p-2">
-            <div class="fs-3 fw-bold text-success">${data.created}</div>
-            <div class="text-muted small">Created</div>
-          </div>
-        </div>
-        <div class="col-6 col-md-3">
-          <div class="card border-0 bg-primary-subtle text-center p-2">
-            <div class="fs-3 fw-bold text-primary">${data.updated}</div>
-            <div class="text-muted small">Updated</div>
-          </div>
-        </div>
-        <div class="col-6 col-md-3">
-          <div class="card border-0 bg-warning-subtle text-center p-2">
-            <div class="fs-3 fw-bold text-warning">${data.skipped}</div>
-            <div class="text-muted small">Skipped</div>
-          </div>
-        </div>
+  try {
+    // Step 1: Get device list for role
+    const formData = new FormData();
+    formData.append('action', 'get_role_summary');
+    formData.append('role_name', roleName);
+    formData.append('csrfmiddlewaretoken', CSRF);
+
+    const summaryRes = await fetch('{% url "plugins:netbox_zabbix:bulk_push" %}', {
+      method: 'POST',
+      body: formData,
+      headers: {'X-Requested-With': 'XMLHttpRequest'}
+    });
+    const summary = await summaryRes.json();
+
+    if (!summary.success) {
+      document.getElementById('bulkStatusText').innerHTML = `<div class="alert alert-danger mb-0"><i class="mdi mdi-alert-circle me-1"></i>${summary.error}</div>`;
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      return;
+    }
+
+    const totalDevices = summary.total;
+    const devices = summary.devices || [];
+    document.getElementById('statTotal').textContent = totalDevices;
+
+    if (totalDevices === 0) {
+      pBar.style.width = '100%';
+      pBar.textContent = '100%';
+      document.getElementById('bulkStatusText').innerHTML = `<div class="alert alert-warning mb-0"><i class="mdi mdi-alert me-1"></i>No devices found for role <strong>${roleName}</strong>.</div>`;
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      return;
+    }
+
+    // Step 2: Process in Chunks of 50 devices
+    const CHUNK_SIZE = 50;
+    let totalCreated = 0, totalUpdated = 0, totalSkipped = 0, totalFailed = 0;
+    let allFailedDetails = [], allSkippedDetails = [];
+
+    const totalBatches = Math.ceil(devices.length / CHUNK_SIZE);
+
+    for (let b = 0; b < totalBatches; b++) {
+      const chunk = devices.slice(b * CHUNK_SIZE, (b + 1) * CHUNK_SIZE);
+      const chunkIds = chunk.map(d => d.id);
+      const firstDevName = chunk[0]?.name || '';
+      const lastDevName = chunk[chunk.length - 1]?.name || '';
+
+      const batchLabel = `Batch ${b + 1} of ${totalBatches} (${chunk.length} devices: ${firstDevName} ... ${lastDevName})`;
+      document.getElementById('bulkStatusText').innerHTML = `<i class="mdi mdi-loading mdi-spin me-1"></i><strong>${batchLabel}</strong> — Pushing to Zabbix...`;
+
+      const batchFormData = new FormData();
+      batchFormData.append('action', 'push');
+      batchFormData.append('role_name', roleName);
+      batchFormData.append('device_ids', JSON.stringify(chunkIds));
+      batchFormData.append('csrfmiddlewaretoken', CSRF);
+
+      const batchRes = await fetch('{% url "plugins:netbox_zabbix:bulk_push" %}', {
+        method: 'POST',
+        body: batchFormData,
+        headers: {'X-Requested-With': 'XMLHttpRequest'}
+      });
+      const resData = await batchRes.json();
+
+      if (resData.success) {
+        totalCreated += (resData.created || 0);
+        totalUpdated += (resData.updated || 0);
+        totalSkipped += (resData.skipped || 0);
+        totalFailed += (resData.failed || 0);
+
+        if (resData.failed_details) allFailedDetails.push(...resData.failed_details);
+        if (resData.skipped_details) allSkippedDetails.push(...resData.skipped_details);
+
+        // Update Stats Counter
+        document.getElementById('statCreated').textContent = totalCreated;
+        document.getElementById('statUpdated').textContent = totalUpdated;
+        document.getElementById('statSkipped').textContent = totalSkipped;
+
+        // Update Progress Bar
+        const processedCount = Math.min((b + 1) * CHUNK_SIZE, totalDevices);
+        const percent = Math.round((processedCount / totalDevices) * 100);
+        pBar.style.width = percent + '%';
+        pBar.textContent = percent + '%';
+        document.getElementById('progressPercent').textContent = percent + '%';
+      }
+    }
+
+    // Step 3: Complete
+    pBar.className = 'progress-bar bg-success fw-bold';
+    pBar.style.width = '100%';
+    pBar.textContent = '100% Complete';
+    document.getElementById('progressPercent').textContent = '100%';
+    document.getElementById('modalTitle').innerHTML = `<i class="mdi mdi-check-circle me-2 text-success"></i>Bulk Push Complete!`;
+
+    document.getElementById('bulkStatusText').innerHTML = `
+      <div class="alert alert-success py-2 mb-0">
+        <i class="mdi mdi-check-circle me-1"></i>
+        Successfully finished pushing <strong>${totalDevices}</strong> device(s) for role <strong>${roleName}</strong>!
       </div>
-      ${data.failed > 0 ? `<div class="alert alert-danger"><i class="mdi mdi-alert me-1"></i><strong>${data.failed} failed.</strong> ${data.failed_details.map(f => f.name + ': ' + f.reason).join(' | ')}</div>` : ''}
-      ${data.skipped > 0 ? `<div class="alert alert-warning small"><strong>Skipped reasons:</strong> ${data.skipped_details.map(s => s.name + ' — ' + s.reason).slice(0,10).join(', ')}</div>` : ''}
-      <p class="text-success fw-bold mb-0"><i class="mdi mdi-check-circle me-1"></i>Role <strong>${data.role_name}</strong>: ${data.created} created, ${data.updated} updated successfully.</p>
     `;
+
+    // Render detailed errors / skips if any
+    let detailsHtml = '';
+    if (totalFailed > 0) {
+      detailsHtml += `<div class="alert alert-danger small mb-2"><strong><i class="mdi mdi-alert me-1"></i>${totalFailed} Failed:</strong> ${allFailedDetails.map(f => f.name + ': ' + f.reason).slice(0, 10).join(' | ')}</div>`;
+    }
+    if (totalSkipped > 0) {
+      detailsHtml += `<div class="alert alert-warning small mb-0"><strong><i class="mdi mdi-alert-outline me-1"></i>${totalSkipped} Skipped:</strong> ${allSkippedDetails.map(s => s.name + ' — ' + s.reason).slice(0, 10).join(', ')}</div>`;
+    }
+    document.getElementById('detailsBox').innerHTML = detailsHtml;
+
+  } catch (err) {
+    document.getElementById('bulkStatusText').innerHTML = `<div class="alert alert-danger mb-0"><i class="mdi mdi-alert-circle me-1"></i>Error: ${String(err)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
   }
-  new bootstrap.Modal(document.getElementById('bulkResultModal')).show();
 }
 
 function toggleSync() {

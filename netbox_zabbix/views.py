@@ -1137,16 +1137,37 @@ class ZabbixBulkPushView(View):
                 'error': f"Role '{role_name}' is incomplete. Sync requires Interface Type, Server/Proxy, and at least 1 Template (Missing: {', '.join(missing)})."
             })
 
+        # Option A: Get Role Summary for Chunked Progress Bar
+        if action == 'get_role_summary':
+            devices_qs = Device.objects.filter(role__name=role_name).values('id', 'name')
+            device_list = [{'id': d['id'], 'name': d['name']} for d in devices_qs if d['name']]
+            return JsonResponse({
+                'success': True,
+                'role_name': role_name,
+                'total': len(device_list),
+                'devices': device_list
+            })
+
         tmpl_payload = [{'templateid': str(t['id'])} for t in mapped_tmpls]
         proxy_id_str = str(proxy_id)
         
         api = ZabbixAPI()
         hostgroup_id = get_or_create_hostgroup_id(api, role_name)
         
-        # Fetch ALL devices for this role with site and tags prefetched
-        devices = list(Device.objects.filter(role__name=role_name).select_related(
-            'role', 'site', 'primary_ip4', 'primary_ip6'
-        ).prefetch_related('site__tags', 'tags'))
+        # Fetch specified devices or ALL devices for this role
+        device_ids_raw = request.POST.get('device_ids')
+        if device_ids_raw:
+            try:
+                device_ids = json.loads(device_ids_raw)
+            except Exception:
+                device_ids = [int(x) for x in device_ids_raw.split(',') if x.strip().isdigit()]
+            devices = list(Device.objects.filter(id__in=device_ids).select_related(
+                'role', 'site', 'primary_ip4', 'primary_ip6'
+            ).prefetch_related('site__tags', 'tags'))
+        else:
+            devices = list(Device.objects.filter(role__name=role_name).select_related(
+                'role', 'site', 'primary_ip4', 'primary_ip6'
+            ).prefetch_related('site__tags', 'tags'))
         
         # Determine interface type numbers
         if if_type_str == 'Agent':
