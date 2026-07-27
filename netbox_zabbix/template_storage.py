@@ -59,17 +59,17 @@ def get_role_zabbix_settings(role_name):
                 tname = names_list[i] if i < len(names_list) else f"Template {tid}"
                 res.append({"id": str(tid), "name": tname})
 
-            valid_pxid = str(pxid) if pxid is not None and str(pxid) != "" else None
+            valid_pxid = str(pxid) if pxid is not None and str(pxid) != "" else "0"
             valid_itype = itype if itype in ['SNMP', 'Agent', 'JMX', 'IPMI'] else None
 
-            has_st = bool(res) or bool(valid_itype) or valid_pxid is not None
+            has_st = bool(res) and bool(valid_itype)
 
             return {
                 'has_settings': has_st,
                 'templates': res,
                 'interface_type': valid_itype,
                 'proxy_id': valid_pxid,
-                'proxy_name': pxname if pxname else None
+                'proxy_name': pxname if pxname else ('Server' if valid_pxid == '0' else None)
             }
     except Exception as e:
         logger.error(f"Error retrieving Zabbix settings for '{role_name}': {e}")

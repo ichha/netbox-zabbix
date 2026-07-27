@@ -237,15 +237,13 @@ def push_device_to_zabbix(device, reason=""):
 
     if_type_str = settings.get("interface_type")
     mapped_tmpls = settings.get("templates", [])
-    proxy_id = settings.get("proxy_id")  # '0' for Server, string ID for Proxy, None if not set
+    proxy_id = settings.get("proxy_id") or "0"
 
-    has_all_three = bool(if_type_str) and (proxy_id is not None) and len(mapped_tmpls) > 0
+    has_all_three = bool(if_type_str) and len(mapped_tmpls) > 0
     if not has_all_three:
         missing = []
         if not if_type_str:
             missing.append("Interface Type")
-        if proxy_id is None:
-            missing.append("Server/Proxy")
         if not mapped_tmpls:
             missing.append("Templates")
         err_msg = f"Incomplete Zabbix settings for role '{role_name}' (Missing: {', '.join(missing)})."

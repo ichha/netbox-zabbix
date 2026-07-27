@@ -1062,15 +1062,13 @@ class ZabbixBulkPushView(View):
             active_count = Device.objects.filter(role__name=role_name, primary_ip4__isnull=False).count()
             
             if_type = settings.get('interface_type')
-            px_id = settings.get('proxy_id')
+            px_id = settings.get('proxy_id') or '0'
             tmpls = settings.get('templates', [])
-            is_ready = bool(if_type) and (px_id is not None) and len(tmpls) > 0
+            is_ready = bool(if_type) and len(tmpls) > 0
             
             missing_items = []
             if not if_type:
                 missing_items.append("Interface Type")
-            if px_id is None:
-                missing_items.append("Server/Proxy")
             if not tmpls:
                 missing_items.append("Templates")
 
@@ -1121,20 +1119,18 @@ class ZabbixBulkPushView(View):
         settings = get_role_zabbix_settings(role_name)
         if_type_str = settings.get('interface_type')
         mapped_tmpls = settings.get('templates', [])
-        proxy_id = settings.get('proxy_id')
+        proxy_id = settings.get('proxy_id') or '0'
         
-        # Requirement 3: Sync is possible ONLY if Type, Server/Proxy, and Template are ALL binded
-        if not (if_type_str and (proxy_id is not None) and mapped_tmpls):
+        # Requirement 3: Sync is possible ONLY if Type and Template are binded
+        if not (if_type_str and mapped_tmpls):
             missing = []
             if not if_type_str:
                 missing.append("Interface Type")
-            if proxy_id is None:
-                missing.append("Server/Proxy")
             if not mapped_tmpls:
                 missing.append("Templates")
             return JsonResponse({
                 'success': False,
-                'error': f"Role '{role_name}' is incomplete. Sync requires Interface Type, Server/Proxy, and at least 1 Template (Missing: {', '.join(missing)})."
+                'error': f"Role '{role_name}' is incomplete. Sync requires Interface Type and at least 1 Template (Missing: {', '.join(missing)})."
             })
 
         # Option A: Get Role Summary for Chunked Progress Bar

@@ -151,13 +151,29 @@
 <script>
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '{{ csrf_token }}';
 
+function openModal(modalEl) {
+  if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+    try {
+      const inst = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+      inst.show();
+      return inst;
+    } catch(e) {}
+  }
+  if (typeof $ !== 'undefined' && $.fn && $.fn.modal) {
+    $(modalEl).modal('show');
+    return;
+  }
+  modalEl.classList.add('show');
+  modalEl.style.display = 'block';
+  document.body.classList.add('modal-open');
+}
+
 async function bulkPush(roleName, btn) {
   const originalHtml = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Pushing...';
   
   const modalEl = document.getElementById('bulkResultModal');
-  const modal = new bootstrap.Modal(modalEl);
   
   // Reset UI
   document.getElementById('modalTitle').innerHTML = `<i class="mdi mdi-cloud-upload me-2"></i>Pushing Devices to Zabbix...`;
@@ -175,7 +191,7 @@ async function bulkPush(roleName, btn) {
   document.getElementById('detailsBox').innerHTML = '';
   document.getElementById('bulkStatusText').innerHTML = `<i class="mdi mdi-loading mdi-spin me-1"></i>Fetching device list for role <strong>${roleName}</strong>...`;
   
-  modal.show();
+  openModal(modalEl);
 
   try {
     // Step 1: Get device list for role
