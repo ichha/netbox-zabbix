@@ -1246,9 +1246,10 @@ class ZabbixBulkPushView(View):
             
             res = api.call('host.create', payloads)
             if isinstance(res, dict) and 'error' in res:
-                # Try one by one
+                # Try one by one with fallback for older Zabbix versions
                 for name, p in batch:
-                    r = api.call('host.create', p)
+                    from .signals import execute_zabbix_host_save
+                    r = execute_zabbix_host_save(api, False, p, proxy_id)
                     if isinstance(r, dict) and 'error' in r:
                         created_fail.append({'name': name, 'reason': str(r['error'])})
                     else:
@@ -1260,9 +1261,8 @@ class ZabbixBulkPushView(View):
         updated_ok = []
         updated_fail = []
         for name, upd in update_payloads:
-            from .signals import apply_monitoring_mode
-            apply_monitoring_mode(upd, proxy_id)
-            res = api.call('host.update', upd)
+            from .signals import execute_zabbix_host_save
+            res = execute_zabbix_host_save(api, True, upd, proxy_id)
             if isinstance(res, dict) and 'error' in res:
                 updated_fail.append({'name': name, 'reason': str(res['error'])})
             else:
