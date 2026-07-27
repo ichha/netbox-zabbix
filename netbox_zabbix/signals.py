@@ -488,14 +488,25 @@ def connect_zabbix_settings_signal():
 
         @receiver(post_save, sender=ZabbixHostGroupTemplate)
         def on_zabbix_settings_saved(sender, instance, created, **kwargs):
+            if is_sync_paused():
+                logger.info(f"[Zabbix Signal] Skipping role '{instance.role_name}' settings sync — auto-sync is paused.")
+                return
+            try:
+                from .models import ZabbixSyncState
+                if not ZabbixSyncState.is_enabled():
+                    logger.info(f"[Zabbix Signal] Auto-sync disabled. Skipping role '{instance.role_name}' settings sync.")
+                    return
+            except Exception:
+                pass
+
             role_name = instance.role_name
             action = "created" if created else "updated"
             logger.info(f"[Zabbix Signal] Zabbix settings {action} for role '{role_name}'. Auto-pushing all devices in this role...")
 
             try:
                 devices = Device.objects.filter(role__name=role_name).select_related(
-                    'role', 'primary_ip4', 'primary_ip6'
-                )
+                    'role', 'site', 'primary_ip4', 'primary_ip6'
+                ).prefetch_related('site__tags', 'tags')
                 pushed = 0
                 skipped = 0
                 for device in devices:
