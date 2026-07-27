@@ -91,7 +91,7 @@
     <div class="modal-content">
       <div class="modal-header bg-primary text-white">
         <h5 class="modal-title" id="modalTitle"><i class="mdi mdi-cloud-upload me-2"></i>Pushing Devices to Zabbix...</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" id="modalCloseBtn"></button>
+        <button type="button" class="btn-close btn-close-white" id="modalCloseBtn" onclick="closeModal('bulkResultModal')"></button>
       </div>
       <div class="modal-body" id="bulkResultBody">
         
@@ -142,7 +142,7 @@
 
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal" id="modalDoneBtn">Close</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="modalDoneBtn" onclick="closeModal('bulkResultModal')">Close</button>
       </div>
     </div>
   </div>
@@ -166,6 +166,28 @@ function openModal(modalEl) {
   modalEl.classList.add('show');
   modalEl.style.display = 'block';
   document.body.classList.add('modal-open');
+}
+
+function closeModal(modalId) {
+  const id = modalId || 'bulkResultModal';
+  const el = document.getElementById(id);
+  if (!el) return;
+
+  if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+    try {
+      const inst = bootstrap.Modal.getInstance(el);
+      if (inst) { inst.hide(); }
+    } catch(e) {}
+  }
+  if (typeof $ !== 'undefined' && $.fn && $.fn.modal) {
+    try { $(el).modal('hide'); } catch(e) {}
+  }
+  
+  el.classList.remove('show');
+  el.style.display = 'none';
+  document.body.classList.remove('modal-open');
+  const backdrops = document.querySelectorAll('.modal-backdrop');
+  backdrops.forEach(b => b.remove());
 }
 
 async function bulkPush(roleName, btn) {
