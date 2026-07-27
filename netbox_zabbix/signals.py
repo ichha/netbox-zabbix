@@ -231,18 +231,26 @@ def push_device_to_zabbix(device, reason=""):
         logger.info(f"[Zabbix] '{device_name}': No Primary IP assigned. Skipping.{' Reason: ' + reason if reason else ''}")
         return False, "No Primary IP assigned."
 
-    # Guard 2: Zabbix settings must be configured for the role
+    # Guard 2: Zabbix settings must be FULLY configured for the role (Type + Server/Proxy + Template required)
     role_name = device.role.name if device.role else None
     settings = get_role_zabbix_settings(role_name) if role_name else {}
 
     if_type_str = settings.get("interface_type")
     mapped_tmpls = settings.get("templates", [])
-    proxy_id = str(settings.get("proxy_id") or "0")
+    proxy_id = settings.get("proxy_id")  # '0' for Server, string ID for Proxy, None if not set
 
-    has_settings = bool(if_type_str) or bool(mapped_tmpls) or proxy_id != "0"
-    if not has_settings:
-        logger.info(f"[Zabbix] '{device_name}': No Zabbix settings configured for role '{role_name}'. Skipping.{' Reason: ' + reason if reason else ''}")
-        return False, f"No Zabbix settings configured for role '{role_name}'."
+    has_all_three = bool(if_type_str) and (proxy_id is not None) and len(mapped_tmpls) > 0
+    if not has_all_three:
+        missing = []
+        if not if_type_str:
+            missing.append("Interface Type")
+        if proxy_id is None:
+            missing.append("Server/Proxy")
+        if not mapped_tmpls:
+            missing.append("Templates")
+        err_msg = f"Incomplete Zabbix settings for role '{role_name}' (Missing: {', '.join(missing)})."
+        logger.info(f"[Zabbix] '{device_name}': {err_msg} Skipping.{' Reason: ' + reason if reason else ''}")
+        return False, err_msg
 
     # Default interface type to SNMP if not set but templates exist
     if not if_type_str:
@@ -480,46 +488,7 @@ def sync_device_to_zabbix_on_delete(sender, instance, **kwargs):
 
 def connect_zabbix_settings_signal():
     """
-    Connect post_save signal to ZabbixHostGroupTemplate model.
-    Called from AppConfig.ready() after models are loaded.
+    Auto-sync from Host Group settings page is disabled per requirements.
+    User configures parameters in Host Groups and syncs manually from Bulk Push page.
     """
-    try:
-        from .models import ZabbixHostGroupTemplate
-
-        @receiver(post_save, sender=ZabbixHostGroupTemplate)
-        def on_zabbix_settings_saved(sender, instance, created, **kwargs):
-            if is_sync_paused():
-                logger.info(f"[Zabbix Signal] Skipping role '{instance.role_name}' settings sync — auto-sync is paused.")
-                return
-            try:
-                from .models import ZabbixSyncState
-                if not ZabbixSyncState.is_enabled():
-                    logger.info(f"[Zabbix Signal] Auto-sync disabled. Skipping role '{instance.role_name}' settings sync.")
-                    return
-            except Exception:
-                pass
-
-            role_name = instance.role_name
-            action = "created" if created else "updated"
-            logger.info(f"[Zabbix Signal] Zabbix settings {action} for role '{role_name}'. Auto-pushing all devices in this role...")
-
-            try:
-                devices = Device.objects.filter(role__name=role_name).select_related(
-                    'role', 'site', 'primary_ip4', 'primary_ip6'
-                ).prefetch_related('site__tags', 'tags')
-                pushed = 0
-                skipped = 0
-                for device in devices:
-                    success, msg = push_device_to_zabbix(device, reason=f"Zabbix settings {action} for role '{role_name}'")
-                    if success:
-                        pushed += 1
-                    else:
-                        skipped += 1
-                        logger.info(f"[Zabbix Signal] Skipped '{device.name}': {msg}")
-
-                logger.info(f"[Zabbix Signal] Auto-push complete for role '{role_name}': {pushed} pushed, {skipped} skipped.")
-            except Exception as e:
-                logger.error(f"[Zabbix Signal Error] Auto-push failed for role '{role_name}': {e}")
-
-    except Exception as e:
-        logger.warning(f"[Zabbix Signal] Could not connect ZabbixHostGroupTemplate signal: {e}")
+    logger.info("[Zabbix Signal] Host Group settings auto-sync disabled. Parameters must be synced from Bulk Push page.")

@@ -487,34 +487,7 @@ class ZabbixMapTemplatesView(View):
 
         save_mapped_templates(role_name, template_ids, template_names, interface_type, proxy_id, proxy_name)
 
-        # If Auto-Sync is ON, trigger push and surface any Zabbix API errors directly to the user
-        from .models import ZabbixSyncState
-        if ZabbixSyncState.is_enabled():
-            from dcim.models import Device
-            from .signals import push_device_to_zabbix
-            devices = list(Device.objects.filter(role__name=role_name).select_related(
-                'role', 'site', 'primary_ip4', 'primary_ip6'
-            ).prefetch_related('site__tags', 'tags'))
-            
-            pushed_count = 0
-            failed_msgs = []
-            for dev in devices:
-                ok, msg = push_device_to_zabbix(dev, reason=f"Settings updated for role '{role_name}'")
-                if ok:
-                    pushed_count += 1
-                else:
-                    failed_msgs.append(f"{dev.name}: {msg}")
-            
-            if failed_msgs:
-                messages.warning(
-                    request, 
-                    f"Saved settings for '{role_name}'. Pushed {pushed_count}/{len(devices)} device(s). Zabbix feedback: {'; '.join(failed_msgs[:3])}"
-                )
-            else:
-                messages.success(request, f"Successfully saved Zabbix Settings and updated {pushed_count} device(s) in Zabbix for '{role_name}'!")
-        else:
-            messages.success(request, f"Successfully saved Zabbix Settings for '{role_name}'. (Auto-Sync is OFF — use Bulk Push to apply).")
-
+        messages.success(request, f"Successfully saved Zabbix Settings for '{role_name}'. Go to Bulk Push to sync with Zabbix.")
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
@@ -1087,13 +1060,29 @@ class ZabbixBulkPushView(View):
             settings = get_role_zabbix_settings(role_name)
             device_count = Device.objects.filter(role__name=role_name).count()
             active_count = Device.objects.filter(role__name=role_name, primary_ip4__isnull=False).count()
+            
+            if_type = settings.get('interface_type')
+            px_id = settings.get('proxy_id')
+            tmpls = settings.get('templates', [])
+            is_ready = bool(if_type) and (px_id is not None) and len(tmpls) > 0
+            
+            missing_items = []
+            if not if_type:
+                missing_items.append("Interface Type")
+            if px_id is None:
+                missing_items.append("Server/Proxy")
+            if not tmpls:
+                missing_items.append("Templates")
+
             roles_data.append({
                 'role_name': role_name,
                 'device_count': device_count,
                 'pushable_count': active_count,
-                'interface_type': settings.get('interface_type', 'N/A'),
-                'template_count': len(settings.get('templates', [])),
-                'proxy_name': settings.get('proxy_name') or 'Server',
+                'interface_type': if_type or 'N/A',
+                'template_count': len(tmpls),
+                'proxy_name': settings.get('proxy_name') or ('Server' if px_id == '0' else 'N/A'),
+                'is_ready': is_ready,
+                'missing_reason': f"Missing {', '.join(missing_items)}" if missing_items else "",
             })
         
         # Auto-sync state
@@ -1130,10 +1119,26 @@ class ZabbixBulkPushView(View):
             return JsonResponse({'success': False, 'error': 'No role specified'})
         
         settings = get_role_zabbix_settings(role_name)
-        if_type_str = settings.get('interface_type') or 'SNMP'
+        if_type_str = settings.get('interface_type')
         mapped_tmpls = settings.get('templates', [])
-        proxy_id = str(settings.get('proxy_id') or '0')
+        proxy_id = settings.get('proxy_id')
+        
+        # Requirement 3: Sync is possible ONLY if Type, Server/Proxy, and Template are ALL binded
+        if not (if_type_str and (proxy_id is not None) and mapped_tmpls):
+            missing = []
+            if not if_type_str:
+                missing.append("Interface Type")
+            if proxy_id is None:
+                missing.append("Server/Proxy")
+            if not mapped_tmpls:
+                missing.append("Templates")
+            return JsonResponse({
+                'success': False,
+                'error': f"Role '{role_name}' is incomplete. Sync requires Interface Type, Server/Proxy, and at least 1 Template (Missing: {', '.join(missing)})."
+            })
+
         tmpl_payload = [{'templateid': str(t['id'])} for t in mapped_tmpls]
+        proxy_id_str = str(proxy_id)
         
         api = ZabbixAPI()
         hostgroup_id = get_or_create_hostgroup_id(api, role_name)

@@ -62,9 +62,16 @@
             <td><span class="badge bg-light text-dark border">{{ r.template_count }} templates</span></td>
             <td class="text-muted small">{{ r.proxy_name }}</td>
             <td class="text-end">
+              {% if r.is_ready %}
               <button class="btn btn-sm btn-primary fw-bold" onclick="bulkPush('{{ r.role_name|escapejs }}', this)" id="btn-{{ forloop.counter }}">
                 <i class="mdi mdi-cloud-upload me-1"></i>Push Role
               </button>
+              {% else %}
+              <button class="btn btn-sm btn-secondary fw-bold" disabled title="{{ r.missing_reason }}">
+                <i class="mdi mdi-alert-circle-outline me-1"></i>Incomplete
+              </button>
+              <div class="text-danger small mt-1" style="font-size:0.75rem;">{{ r.missing_reason }}</div>
+              {% endif %}
               <div class="mt-1" id="result-{{ forloop.counter }}"></div>
             </td>
           </tr>
