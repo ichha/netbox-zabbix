@@ -568,6 +568,7 @@ class ZabbixHostsView(View):
         ).select_related('role', 'primary_ip4', 'primary_ip6')
 
         q = request.GET.get('q', '').strip()
+        status_filter = request.GET.get('status', '').strip().lower()
         if q:
             qs = qs.filter(
                 Q(name__icontains=q) |
