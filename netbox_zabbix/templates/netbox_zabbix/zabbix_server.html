@@ -14,6 +14,20 @@
         </nav>
         <h1 class="h2 mb-0 fw-bold">Zabbix Server Dashboard</h1>
     </div>
+    <div class="d-flex align-items-center gap-2">
+        <!-- Auto-Sync Toggle -->
+        <form id="syncToggleForm" method="post" action="{% url 'plugins:netbox_zabbix:bulk_push' %}">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="toggle_sync">
+            <button type="button" id="syncToggleBtn" class="btn btn-sm fw-bold {% if sync_enabled %}btn-success{% else %}btn-danger{% endif %}" onclick="toggleSyncServer()">
+                <i class="mdi {% if sync_enabled %}mdi-sync me-1{% else %}mdi-sync-off me-1{% endif %}" id="syncIcon"></i>
+                <span id="syncLabel">{% if sync_enabled %}Auto-Sync: ON{% else %}Auto-Sync: OFF{% endif %}</span>
+            </button>
+        </form>
+        <a href="{% url 'plugins:netbox_zabbix:bulk_push' %}" class="btn btn-sm btn-outline-primary">
+            <i class="mdi mdi-cloud-upload me-1"></i>Bulk Push
+        </a>
+    </div>
 </div>
 {% endblock %}
 
@@ -174,4 +188,33 @@
         </a>
     </div>
 </div>
+
+<script>
+function toggleSyncServer() {
+  const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '{{ csrf_token }}';
+  const formData = new FormData();
+  formData.append('action', 'toggle_sync');
+  formData.append('csrfmiddlewaretoken', CSRF);
+
+  fetch('{% url "plugins:netbox_zabbix:bulk_push" %}', {
+    method: 'POST',
+    body: formData,
+  })
+  .then(r => r.json())
+  .then(data => {
+    const btn = document.getElementById('syncToggleBtn');
+    const icon = document.getElementById('syncIcon');
+    const label = document.getElementById('syncLabel');
+    if (data.sync_enabled) {
+      btn.className = 'btn btn-sm fw-bold btn-success';
+      icon.className = 'mdi mdi-sync me-1';
+      label.textContent = 'Auto-Sync: ON';
+    } else {
+      btn.className = 'btn btn-sm fw-bold btn-danger';
+      icon.className = 'mdi mdi-sync-off me-1';
+      label.textContent = 'Auto-Sync: OFF';
+    }
+  });
+}
+</script>
 {% endblock %}

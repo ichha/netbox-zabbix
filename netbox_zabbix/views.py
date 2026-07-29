@@ -103,19 +103,47 @@ class ZabbixServersView(View):
         api = ZabbixAPI()
         version, error = api.get_api_version()
         
-        hosts = api.get_hosts()
-        templates = api.get_templates()
-        proxies = api.get_proxies()
-        hostgroups = api.get_host_groups()
-        macros = api.get_macros()
-        tags = api.get_tags()
-        
-        host_count = len(hosts) if isinstance(hosts, list) else 0
-        template_count = len(templates) if isinstance(templates, list) else 0
-        proxy_count = len(proxies) if isinstance(proxies, list) else 0
-        hostgroup_count = len(hostgroups) if isinstance(hostgroups, list) else 0
-        macro_count = len(macros) if isinstance(macros, list) else 0
-        tag_count = len(tags) if isinstance(tags, list) else 0
+        # Fast API counts using countOutput (INSTANT vs downloading 50MB of host data!)
+        try:
+            h_res = api.call('host.get', {'countOutput': True})
+            host_count = int(h_res) if isinstance(h_res, (int, str)) and str(h_res).isdigit() else 0
+        except Exception:
+            host_count = 0
+
+        try:
+            t_res = api.call('template.get', {'countOutput': True})
+            template_count = int(t_res) if isinstance(t_res, (int, str)) and str(t_res).isdigit() else 0
+        except Exception:
+            template_count = 0
+
+        try:
+            p_res = api.call('proxy.get', {'countOutput': True})
+            proxy_count = int(p_res) if isinstance(p_res, (int, str)) and str(p_res).isdigit() else 0
+        except Exception:
+            proxy_count = 0
+
+        try:
+            g_res = api.call('hostgroup.get', {'countOutput': True})
+            hostgroup_count = int(g_res) if isinstance(g_res, (int, str)) and str(g_res).isdigit() else 0
+        except Exception:
+            hostgroup_count = 0
+
+        try:
+            m_res = api.call('usermacro.get', {'globalmacro': True, 'countOutput': True})
+            macro_count = int(m_res) if isinstance(m_res, (int, str)) and str(m_res).isdigit() else 0
+        except Exception:
+            macro_count = 0
+
+        tag_count = 0
+        try:
+            tags = api.get_tags()
+            tag_count = len(tags) if isinstance(tags, list) else 0
+        except Exception:
+            pass
+
+        # Auto-sync state
+        from .models import ZabbixSyncState
+        sync_enabled = ZabbixSyncState.is_enabled()
         
         context = {
             'zabbix_url': api.url,
@@ -129,6 +157,7 @@ class ZabbixServersView(View):
             'hostgroup_count': hostgroup_count,
             'macro_count': macro_count,
             'tag_count': tag_count,
+            'sync_enabled': sync_enabled,
         }
         return render(request, 'netbox_zabbix/zabbix_server.html', context)
 
