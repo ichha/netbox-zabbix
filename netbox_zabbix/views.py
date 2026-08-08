@@ -863,12 +863,7 @@ class ZabbixHostsView(View):
                 item["zabbix_templates"] = template_names
 
                 role_cfg = role_settings_map.get(nb_role, {})
-                expected_tmpls = [t['name'].strip() for t in role_cfg.get('templates', []) if t.get('name')]
-                if expected_tmpls:
-                    z_tmpls_lower = [t.lower() for t in template_names]
-                    missing_tmpls = [t for t in expected_tmpls if t.lower() not in z_tmpls_lower]
-                    if missing_tmpls:
-                        mismatch_reasons.append(f"Missing Templates: {', '.join(missing_tmpls)}")
+                # Note: Templates are displayed for reference but no longer trigger mismatch as per requirement
 
                 proxy_id = str(zh_target.get("proxyid") or zh_target.get("proxy_hostid") or "0")
                 proxy_group_id = str(zh_target.get("proxy_groupid") or "0")
