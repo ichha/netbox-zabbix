@@ -607,20 +607,10 @@ class ZabbixHostsView(View):
 
         total_devices = qs.count()
 
-        # 2. Fast Count of Zabbix Hosts for Summary Cards
-        zabbix_error = None
-        matched_count = 0
-        mismatch_count = 0
-        try:
-            z_count_res = api.call('host.get', {'countOutput': True})
-            if isinstance(z_count_res, (int, str)) and str(z_count_res).isdigit():
-                z_total = int(z_count_res)
-                matched_count = min(total_devices, z_total)
-                mismatch_count = max(0, total_devices - matched_count)
-            elif isinstance(z_count_res, dict) and "error" in z_count_res:
-                zabbix_error = str(z_count_res["error"])
-        except Exception as e:
-            logger.warning(f"Failed to fetch Zabbix host count: {e}")
+        # 2. Get role settings map (for attached template comparison)
+        from .models import ZabbixHostGroupTemplate
+        configured_roles = ZabbixHostGroupTemplate.objects.all()
+        role_settings_map = {cfg.role_name: get_role_zabbix_settings(cfg.role_name) for cfg in configured_roles}
 
         # 3. Pagination Setup (Default 50 per page, max 200 for performance)
         per_page_param = request.GET.get('per_page', '50')
@@ -658,8 +648,9 @@ class ZabbixHostsView(View):
             elif d.primary_ip6:
                 page_ips.append(str(d.primary_ip6.address).split('/')[0])
 
-        # 4. TARGETED ZABBIX FETCH: Query Zabbix ON DEMAND ONLY for current page's 50 devices
+        # 4. TARGETED ZABBIX FETCH: Query Zabbix ON DEMAND ONLY for current page's devices
         zabbix_hosts = []
+        zabbix_error = None
         if page_names:
             try:
                 res = api.call('host.get', {
@@ -672,10 +663,11 @@ class ZabbixHostsView(View):
                 })
                 if isinstance(res, list):
                     zabbix_hosts.extend(res)
+                elif isinstance(res, dict) and "error" in res:
+                    zabbix_error = str(res["error"])
             except Exception as e:
                 logger.error(f"Error fetching targeted Zabbix hosts by name: {e}")
 
-            # Fallback by IP for any unmatched names on current page
             found_names = {h.get('host', '').strip().lower() for h in zabbix_hosts if isinstance(h, dict)}
             missing_names = [n for n in page_names if n.strip().lower() not in found_names]
             if missing_names and page_ips:
@@ -695,7 +687,7 @@ class ZabbixHostsView(View):
                 except Exception as e:
                     logger.error(f"Error fetching targeted Zabbix hosts by IP: {e}")
 
-        # Build Lookups for Page
+        # Build Lookups
         zabbix_name_map = {}
         zabbix_ip_map = {}
         if isinstance(zabbix_hosts, list):
@@ -717,7 +709,7 @@ class ZabbixHostsView(View):
                             if ip_addr and ip_addr not in ["0.0.0.0", "127.0.0.1"]:
                                 zabbix_ip_map[ip_addr] = zh
 
-        # Fast Proxy Map for page hosts
+        # Fast Proxy Map
         proxy_map = {}
         try:
             proxies = api.get_proxies()
@@ -730,8 +722,11 @@ class ZabbixHostsView(View):
         except Exception:
             pass
 
-        # 5. Build Page Blocks for rendering
+        # 5. Build Page Blocks and Evaluate All 5 Comparisons
         page_blocks = []
+        page_matched_count = 0
+        page_mismatch_count = 0
+
         for dev in page_devices:
             nb_name = dev.name or f"Device-{dev.pk}"
             nb_ip = "—"
@@ -752,7 +747,8 @@ class ZabbixHostsView(View):
                 "netbox_status": nb_status,
                 "netbox_role": nb_role,
                 "netbox_mapped_hostgroup": nb_role,
-                "match_status": "matched" if matching_zabbix_host else "mismatch",
+                "match_status": "mismatch",
+                "mismatch_reasons": [],
                 "role_synced": False,
                 "zabbix_exists": False,
                 "zabbix_hostid": "",
@@ -777,19 +773,73 @@ class ZabbixHostsView(View):
                 "snmpv3_privpass": "—",
             }
 
-            if matching_zabbix_host:
+            mismatch_reasons = []
+
+            if not matching_zabbix_host:
+                mismatch_reasons.append("Not in Zabbix")
+            else:
                 zh_target = matching_zabbix_host
                 item["zabbix_exists"] = True
                 zh_hid = str(zh_target.get("hostid", ""))
                 item["zabbix_hostid"] = zh_hid
                 
-                c_tech = zh_target.get("host", "")
-                c_vis = zh_target.get("name", "")
+                c_tech = (zh_target.get("host") or "").strip()
+                c_vis = (zh_target.get("name") or "").strip()
                 item["zabbix_name"] = c_vis if c_vis else c_tech
 
+                # COMPARISON 1: Name Check
+                if nb_name_lower != c_tech.lower() and nb_name_lower != c_vis.lower():
+                    mismatch_reasons.append(f"Name Mismatch ({nb_name} vs {item['zabbix_name']})")
+
+                # COMPARISON 2: Primary IP Check
+                interfaces = zh_target.get("interfaces", [])
+                zip_addr = "—"
+                if isinstance(interfaces, list) and len(interfaces) > 0:
+                    main_iface = interfaces[0]
+                    for iface in interfaces:
+                        if str(iface.get("main")) == "1":
+                            main_iface = iface
+                            break
+                    zip_addr = (main_iface.get("ip") or "").strip()
+                    item["zabbix_ip"] = zip_addr if zip_addr else nb_ip
+                    item["zabbix_port"] = str(main_iface.get("port") or "")
+
+                    t_val = str(main_iface.get("type", "1"))
+                    item["zabbix_protocol"] = "SNMP" if t_val == "2" else "IPMI" if t_val == "3" else "JMX" if t_val == "4" else "Agent"
+
+                    if t_val == "2":
+                        details = main_iface.get("details", {})
+                        if not isinstance(details, dict):
+                            details = {}
+                        ver = str(details.get("version") or main_iface.get("version") or "2")
+                        item["snmp_version"] = "SNMPv1" if ver == "1" else "SNMPv3" if ver == "3" else "SNMPv2c"
+                        raw_comm = details.get("community") or main_iface.get("community")
+                        if raw_comm:
+                            item["snmp_community"] = str(raw_comm)
+
+                if nb_ip != "—" and zip_addr != "—" and nb_ip != zip_addr:
+                    mismatch_reasons.append(f"IP Mismatch ({nb_ip} vs {zip_addr})")
+
+                # COMPARISON 3: Status Check (Active <-> Monitored '0', Non-Active <-> Disabled '1')
                 z_st = str(zh_target.get("status", "0"))
                 item["zabbix_status"] = "Monitored" if z_st == "0" else "Disabled"
+                
+                if nb_status.lower() == 'active':
+                    if z_st != '0':
+                        mismatch_reasons.append("Status Mismatch (NetBox: Active, Zabbix: Disabled)")
+                else:
+                    if z_st != '1':
+                        mismatch_reasons.append(f"Status Mismatch (NetBox: {nb_status}, Zabbix: Monitored)")
 
+                # COMPARISON 4: Role / Host Group Check
+                z_groups = zh_target.get("hostgroups", []) or zh_target.get("groups", [])
+                item["zabbix_hostgroups"] = [g.get("name") for g in z_groups if isinstance(g, dict) and g.get("name")]
+
+                if nb_role != "—" and nb_role:
+                    if not any(nb_role.lower() == zg.lower() for zg in item["zabbix_hostgroups"]):
+                        mismatch_reasons.append(f"Host Group Mismatch (Missing group: {nb_role})")
+
+                # COMPARISON 5: Attached Templates Check (Inherited from NetBox Role settings)
                 all_t_objs = []
                 for k in ["parentTemplates", "templates", "inheritedTemplates"]:
                     t_list = zh_target.get(k)
@@ -807,41 +857,13 @@ class ZabbixHostsView(View):
 
                 item["zabbix_templates"] = template_names
 
-                z_groups = zh_target.get("hostgroups", []) or zh_target.get("groups", [])
-                item["zabbix_hostgroups"] = [g.get("name") for g in z_groups if isinstance(g, dict) and g.get("name")]
-
-                interfaces = zh_target.get("interfaces", [])
-                if isinstance(interfaces, list) and len(interfaces) > 0:
-                    main_iface = interfaces[0]
-                    for iface in interfaces:
-                        if str(iface.get("main")) == "1":
-                            main_iface = iface
-                            break
-
-                    zip_addr = main_iface.get("ip")
-                    item["zabbix_ip"] = zip_addr if zip_addr else nb_ip
-                    item["zabbix_port"] = str(main_iface.get("port") or "")
-
-                    t_val = str(main_iface.get("type", "1"))
-                    item["zabbix_protocol"] = "SNMP" if t_val == "2" else "IPMI" if t_val == "3" else "JMX" if t_val == "4" else "Agent"
-
-                    if t_val == "2":
-                        details = main_iface.get("details", {})
-                        if not isinstance(details, dict):
-                            details = {}
-
-                        ver = str(details.get("version") or main_iface.get("version") or "2")
-                        item["snmp_version"] = "SNMPv1" if ver == "1" else "SNMPv3" if ver == "3" else "SNMPv2c"
-
-                        raw_comm = details.get("community") or main_iface.get("community")
-                        if raw_comm:
-                            item["snmp_community"] = str(raw_comm)
-
-                        if ver == "3":
-                            item["snmpv3_context"] = details.get("contextname") or main_iface.get("contextname") or "—"
-                            item["snmpv3_secname"] = details.get("securityname") or main_iface.get("securityname") or "—"
-                            s_lvl = str(details.get("securitylevel") or main_iface.get("securitylevel") or "0")
-                            item["snmpv3_seclevel"] = "authPriv" if s_lvl == "2" else "authNoPriv" if s_lvl == "1" else "noAuthNoPriv"
+                role_cfg = role_settings_map.get(nb_role, {})
+                expected_tmpls = [t['name'].strip() for t in role_cfg.get('templates', []) if t.get('name')]
+                if expected_tmpls:
+                    z_tmpls_lower = [t.lower() for t in template_names]
+                    missing_tmpls = [t for t in expected_tmpls if t.lower() not in z_tmpls_lower]
+                    if missing_tmpls:
+                        mismatch_reasons.append(f"Missing Templates: {', '.join(missing_tmpls)}")
 
                 proxy_id = str(zh_target.get("proxyid") or zh_target.get("proxy_hostid") or "0")
                 proxy_group_id = str(zh_target.get("proxy_groupid") or "0")
@@ -857,11 +879,39 @@ class ZabbixHostsView(View):
                 else:
                     item["zabbix_monitored_by"] = "Server"
 
-                item["role_synced"] = any(nb_role.lower() == zg.lower() for zg in item["zabbix_hostgroups"]) if nb_role != "—" else False
+            if len(mismatch_reasons) == 0:
+                item["match_status"] = "matched"
+                page_matched_count += 1
+            else:
+                item["match_status"] = "mismatch"
+                item["mismatch_reasons"] = mismatch_reasons
+                page_mismatch_count += 1
 
             page_blocks.append(item)
 
-        page_obj.object_list = page_blocks
+        # 6. Apply status filter if ?status=matched or ?status=mismatch was clicked
+        if status_filter in ['synced', 'active', 'matched']:
+            filtered_blocks = [b for b in page_blocks if b['match_status'] == 'matched']
+        elif status_filter in ['pending', 'inactive', 'mismatch', 'disabled', 'not_in_zabbix']:
+            filtered_blocks = [b for b in page_blocks if b['match_status'] == 'mismatch']
+        else:
+            filtered_blocks = page_blocks
+
+        page_obj.object_list = filtered_blocks
+
+        # Calculate counts for Top Cards
+        try:
+            z_count_res = api.call('host.get', {'countOutput': True})
+            if isinstance(z_count_res, (int, str)) and str(z_count_res).isdigit():
+                z_total = int(z_count_res)
+                matched_count = page_matched_count if status_filter else min(total_devices, z_total)
+                mismatch_count = page_mismatch_count if status_filter else max(0, total_devices - matched_count)
+            else:
+                matched_count = page_matched_count
+                mismatch_count = page_mismatch_count
+        except Exception:
+            matched_count = page_matched_count
+            mismatch_count = page_mismatch_count
 
         headers = [
             "Source",

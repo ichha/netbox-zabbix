@@ -39,7 +39,7 @@
                     <div>
                         <div class="fs-6 text-muted text-uppercase fw-semibold">Matched in Zabbix</div>
                         <div class="fs-2 fw-bold text-success">{{ synced_devices }}</div>
-                        <div class="fs-7 text-muted">Name & IP match in Zabbix (Click to filter)</div>
+                        <div class="fs-7 text-muted">All 5 fields match (Click to filter)</div>
                     </div>
                 </div>
             </a>
@@ -53,7 +53,7 @@
                     <div>
                         <div class="fs-6 text-muted text-uppercase fw-semibold">Mismatch / Not in Zabbix</div>
                         <div class="fs-2 fw-bold text-danger">{{ devices_to_sync }}</div>
-                        <div class="fs-7 text-muted">Name/IP mismatch or missing (Click to filter)</div>
+                        <div class="fs-7 text-muted">Parameter mismatch or missing (Click to filter)</div>
                     </div>
                 </div>
             </a>
@@ -258,13 +258,20 @@
                                         </span>
                                     {% else %}
                                         <span class="badge bg-danger-subtle text-dark border border-danger-subtle fw-bold w-100 p-2" style="font-size: 0.8rem;">
-                                            <i class="mdi mdi-close-circle me-1"></i> Not in Zabbix
+                                            <i class="mdi mdi-alert-circle me-1"></i> Mismatched
                                         </span>
+                                        {% if item.mismatch_reasons %}
+                                            <div class="text-danger text-start small w-100 my-1 p-1 bg-white border border-danger-subtle rounded" style="font-size: 0.72rem; line-height: 1.25;">
+                                                {% for reason in item.mismatch_reasons %}
+                                                    <div class="mb-1"><i class="mdi mdi-alert-outline me-1"></i>{{ reason }}</div>
+                                                {% endfor %}
+                                            </div>
+                                        {% endif %}
                                         <form action="{% url 'plugins:netbox_zabbix:push_device' %}" method="post" class="w-100">
                                             {% csrf_token %}
                                             <input type="hidden" name="device_name" value="{{ item.netbox_name }}" />
-                                            <button type="submit" class="btn btn-sm btn-success fw-bold text-white w-100 py-1" style="font-size: 0.78rem;" title="Push Device from NetBox to Zabbix">
-                                                <i class="mdi mdi-cloud-upload me-1"></i> Push to Zabbix
+                                            <button type="submit" class="btn btn-sm btn-success fw-bold text-white w-100 py-1" style="font-size: 0.78rem;" title="Sync / Push Device from NetBox to Zabbix">
+                                                <i class="mdi mdi-cloud-upload me-1"></i> Sync to Zabbix
                                             </button>
                                         </form>
                                     {% endif %}
