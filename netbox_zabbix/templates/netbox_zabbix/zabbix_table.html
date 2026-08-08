@@ -170,8 +170,18 @@
                                     {{ item.netbox_role }}
                                 </span>
                             </td>
-                            <td class="align-middle">
-                                <span class="text-muted small">&mdash;</span>
+                            <td class="align-middle py-2">
+                                {% if item.netbox_templates %}
+                                    <div class="d-flex flex-column gap-1 align-items-start">
+                                        {% for tmpl in item.netbox_templates %}
+                                            <span class="badge bg-success-subtle text-dark border border-success-subtle fw-normal d-inline-flex align-items-center gap-1 shadow-sm" style="font-size: 0.78rem; padding: 3px 8px; border-radius: 4px;">
+                                                <i class="mdi mdi-file-document-outline text-success me-1"></i> {{ tmpl }}
+                                            </span>
+                                        {% endfor %}
+                                    </div>
+                                {% else %}
+                                    <span class="text-muted small">&mdash; None &mdash;</span>
+                                {% endif %}
                             </td>
 
                             <!-- ZABBIX SETTINGS & SNMP: COMBINED ACROSS 2 ROWS -->

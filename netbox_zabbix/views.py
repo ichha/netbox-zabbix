@@ -758,6 +758,7 @@ class ZabbixHostsView(View):
                 "zabbix_status": "—",
                 "zabbix_hostgroups": [],
                 "zabbix_templates": [],
+                "netbox_templates": [],
                 "zabbix_protocol": "—",
                 "zabbix_monitored_by": "—",
                 "snmp_version": "—",
@@ -772,6 +773,10 @@ class ZabbixHostsView(View):
                 "snmpv3_privproto": "—",
                 "snmpv3_privpass": "—",
             }
+
+            role_cfg = role_settings_map.get(nb_role, {})
+            netbox_templates = [t['name'] for t in role_cfg.get('templates', []) if isinstance(t, dict) and t.get('name')]
+            item["netbox_templates"] = netbox_templates
 
             mismatch_reasons = []
 
