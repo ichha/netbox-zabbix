@@ -992,33 +992,46 @@ class ZabbixHostsView(View):
 
 class ZabbixPushDeviceView(View):
     def post(self, request):
-        device_name = request.POST.get('device_name')
-        if not device_name:
-            messages.error(request, "Missing Device name.")
+        device_names = request.POST.getlist('device_names')
+        single_name = request.POST.get('device_name')
+
+        if single_name and single_name not in device_names:
+            device_names.append(single_name)
+
+        if not device_names:
+            messages.error(request, "No devices selected to sync.")
             return redirect('plugins:netbox_zabbix:hosts')
 
         from dcim.models import Device
-        dev = Device.objects.filter(name=device_name).select_related(
+        devices = list(Device.objects.filter(name__in=device_names).select_related(
             'role', 'primary_ip4', 'primary_ip6'
-        ).first()
-        if not dev:
-            messages.error(request, f"NetBox device '{device_name}' not found.")
+        ))
+
+        if not devices:
+            messages.error(request, "Selected devices not found in NetBox.")
             return redirect('plugins:netbox_zabbix:hosts')
 
-        success, msg = push_device_to_zabbix(dev, reason="Manual Push from UI")
+        success_count = 0
+        failed_count = 0
+        error_msgs = []
 
-        if success:
-            messages.success(request, f"✅ Successfully pushed '{device_name}' to Zabbix! ({msg})")
-        else:
-            # User-friendly error messages based on guard condition
-            if "No Primary IP" in msg:
-                messages.error(request, f"❌ Cannot push '{device_name}': No Primary IP assigned in NetBox.")
-            elif "No Zabbix settings" in msg:
-                messages.error(request, f"❌ Cannot push '{device_name}': No Zabbix settings configured for its role. Go to Host Groups → Add Zabbix Settings.")
-            elif "SNMP type configured but no SNMP" in msg:
-                messages.error(request, f"❌ Cannot push '{device_name}': SNMP interface selected but no SNMP Community or SNMPv3 credentials set on the device.")
+        for dev in devices:
+            success, msg = push_device_to_zabbix(dev, reason="Bulk Push Selected")
+            if success:
+                success_count += 1
             else:
-                messages.error(request, f"❌ Failed to push '{device_name}' to Zabbix: {msg}")
+                failed_count += 1
+                error_msgs.append(f"{dev.name}: {msg}")
+
+        if success_count > 0 and failed_count == 0:
+            if len(devices) == 1:
+                messages.success(request, f"✅ Successfully synced '{devices[0].name}' to Zabbix!")
+            else:
+                messages.success(request, f"✅ Successfully synced all {success_count} selected devices to Zabbix!")
+        elif success_count > 0 and failed_count > 0:
+            messages.warning(request, f"⚠️ Synced {success_count} devices successfully, but {failed_count} failed. Details: {' | '.join(error_msgs[:5])}")
+        else:
+            messages.error(request, f"❌ Failed to sync selected devices: {' | '.join(error_msgs[:5])}")
 
         return redirect('plugins:netbox_zabbix:hosts')
 

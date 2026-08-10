@@ -129,14 +129,21 @@
                 {% if q or status_filter %}
                     <a href="?" class="btn btn-sm btn-outline-secondary ms-1">Reset Filters</a>
                 {% endif %}
+                {% if is_hosts_view %}
+                    <button type="button" id="sync-selected-btn" class="btn btn-sm btn-success fw-bold text-white ms-2" onclick="submitBulkSync()" disabled title="Sync all selected devices to Zabbix">
+                        <i class="mdi mdi-sync me-1"></i> Sync Selected (<span id="selected-count">0</span>)
+                    </button>
+                {% endif %}
             </div>
             <div class="col-auto ms-auto">
                 <span class="badge bg-light text-dark border">
                     <i class="mdi mdi-filter-check me-1"></i>
                     {% if status_filter == 'synced' or status_filter == 'matched' %}
                         Showing Matched {{ title }}
-                    {% elif status_filter == 'mismatch' or status_filter == 'pending' %}
-                        Showing Mismatched / Not in Zabbix {{ title }}
+                    {% elif status_filter == 'value_mismatch' or status_filter == 'mismatch' %}
+                        Showing Value Mismatched {{ title }}
+                    {% elif status_filter == 'not_in_zabbix' %}
+                        Showing Not in Zabbix {{ title }}
                     {% else %}
                         Showing All NetBox {{ title }}
                     {% endif %}
@@ -155,27 +162,35 @@
                 <strong>Failed to connect to Zabbix API:</strong> {{ error }}
             </div>
         {% elif is_hosts_view and page_obj.object_list %}
-            <!-- CLEAN MODERN UNIFIED TABLE FOR HOSTS PAGE -->
-            <table class="table align-middle mb-0">
-                <thead>
-                    <tr class="bg-body-tertiary text-uppercase fs-7 text-muted border-bottom">
-                        <th style="width: 90px;">Source</th>
-                        <th>Device Name</th>
-                        <th>Primary IP</th>
-                        <th>Status</th>
-                        <th>Role / Host Groups</th>
-                        <th>Attached Templates</th>
-                        <th>Zabbix Settings & SNMP</th>
-                        <th class="text-end" style="width: 150px;">Match Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in page_obj.object_list %}
-                        <!-- ROW 1: NETBOX DATA -->
-                        <tr class="bg-white border-top border-2 border-light-subtle">
-                            <td class="align-middle fw-bold text-success" style="font-size: 0.85rem;">
-                                <i class="mdi mdi-circle-medium text-success me-1"></i>NetBox
-                            </td>
+            <!-- CLEAN MODERN UNIFIED TABLE FOR HOSTS PAGE WITH MULTI-SELECT -->
+            <form id="bulk-sync-form" action="{% url 'plugins:netbox_zabbix:push_device' %}" method="post">
+                {% csrf_token %}
+                <table class="table align-middle mb-0">
+                    <thead>
+                        <tr class="bg-body-tertiary text-uppercase fs-7 text-muted border-bottom">
+                            <th style="width: 40px;" class="text-center">
+                                <input type="checkbox" id="select-all-hosts" class="form-check-input" onclick="toggleSelectAll(this)" title="Select All on this page">
+                            </th>
+                            <th style="width: 90px;">Source</th>
+                            <th>Device Name</th>
+                            <th>Primary IP</th>
+                            <th>Status</th>
+                            <th>Role / Host Groups</th>
+                            <th>Attached Templates</th>
+                            <th>Zabbix Settings & SNMP</th>
+                            <th class="text-end" style="width: 150px;">Match Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in page_obj.object_list %}
+                            <!-- ROW 1: NETBOX DATA -->
+                            <tr class="bg-white border-top border-2 border-light-subtle">
+                                <td class="align-middle text-center" rowspan="2">
+                                    <input type="checkbox" name="device_names" value="{{ item.netbox_name }}" class="form-check-input host-checkbox" onchange="updateSelectedCount()">
+                                </td>
+                                <td class="align-middle fw-bold text-success" style="font-size: 0.85rem;">
+                                    <i class="mdi mdi-circle-medium text-success me-1"></i>NetBox
+                                </td>
                             <td class="align-middle fw-bold text-dark" style="font-size: 1.05rem;">{{ item.netbox_name }}</td>
                             <td class="align-middle"><code class="fw-bold fs-7">{{ item.netbox_ip }}</code></td>
                             <td class="align-middle">
@@ -379,6 +394,7 @@
                     {% endfor %}
                 </tbody>
             </table>
+            </form>
 
         {% elif page_obj.object_list %}
             <!-- STANDARD TABLE FOR OTHER PAGES (Host Groups, Templates, Proxies, etc.) -->
@@ -769,5 +785,34 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 });
+
+function toggleSelectAll(master) {
+    const checkboxes = document.querySelectorAll('.host-checkbox');
+    checkboxes.forEach(cb => {
+        cb.checked = master.checked;
+    });
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const checked = document.querySelectorAll('.host-checkbox:checked');
+    const count = checked.length;
+    const btn = document.getElementById('sync-selected-btn');
+    const label = document.getElementById('selected-count');
+    if (label) label.textContent = count;
+    if (btn) {
+        btn.disabled = (count === 0);
+    }
+}
+
+function submitBulkSync() {
+    const checked = document.querySelectorAll('.host-checkbox:checked');
+    if (checked.length === 0) return;
+    if (!confirm('Are you sure you want to sync/push ' + checked.length + ' selected device(s) to Zabbix?')) return;
+    const form = document.getElementById('bulk-sync-form');
+    if (form) {
+        form.submit();
+    }
+}
 </script>
 {% endblock %}
