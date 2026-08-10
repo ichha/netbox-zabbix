@@ -586,10 +586,12 @@ class ZabbixCreateHostGroupView(View):
             messages.success(request, f"Host Group '{role_name}' is ready in Zabbix (ID {group_id})!")
         return redirect('plugins:netbox_zabbix:hostgroups')
 
+
 class ZabbixHostsView(View):
     def get(self, request):
         api = ZabbixAPI()
         from dcim.models import Device
+        from .models import ZabbixHostGroupTemplate
 
         # 1. Base Queryset for NetBox Devices with Primary IP
         qs = Device.objects.filter(
@@ -607,12 +609,126 @@ class ZabbixHostsView(View):
 
         total_devices = qs.count()
 
-        # 2. Get role settings map (for attached template comparison)
-        from .models import ZabbixHostGroupTemplate
+        # 2. Get role settings map (for attached template rendering)
         configured_roles = ZabbixHostGroupTemplate.objects.all()
         role_settings_map = {cfg.role_name: get_role_zabbix_settings(cfg.role_name) for cfg in configured_roles}
 
-        # 3. Pagination Setup (Default 50 per page, max 200 for performance)
+        # 3. GLOBAL ZABBIX FETCH & CLASSIFICATION (Fast & Lightweight API query across all Zabbix hosts)
+        zabbix_error = None
+        z_hosts = []
+        try:
+            res = api.call('host.get', {
+                'selectInterfaces': ['interfaceid', 'type', 'main', 'ip', 'port'],
+                'selectHostGroups': ['groupid', 'name'],
+                'output': ['hostid', 'host', 'name', 'status']
+            })
+            if isinstance(res, list):
+                z_hosts = res
+            elif isinstance(res, dict) and "error" in res:
+                zabbix_error = str(res["error"])
+        except Exception as e:
+            logger.error(f"Error fetching global Zabbix hosts index: {e}")
+
+        # Index Zabbix hosts in memory
+        zabbix_by_name = {}
+        zabbix_by_vis = {}
+        zabbix_ip_map = {}
+        zabbix_by_id = {}
+
+        if isinstance(z_hosts, list):
+            for zh in z_hosts:
+                if not isinstance(zh, dict):
+                    continue
+                hid = str(zh.get("hostid", ""))
+                if hid:
+                    zabbix_by_id[hid] = zh
+
+                zh_tech = (zh.get("host") or "").strip().lower()
+                zh_vis = (zh.get("name") or "").strip().lower()
+                if zh_tech:
+                    zabbix_by_name[zh_tech] = zh
+                if zh_vis:
+                    zabbix_by_vis[zh_vis] = zh
+
+                ifaces = zh.get("interfaces", [])
+                if isinstance(ifaces, list):
+                    for ifc in ifaces:
+                        if isinstance(ifc, dict) and str(ifc.get("main")) == "1":
+                            ip_addr = (ifc.get("ip") or "").strip()
+                            if ip_addr and ip_addr not in ["0.0.0.0", "127.0.0.1"]:
+                                zh["ip"] = ip_addr
+                                zabbix_ip_map[ip_addr] = zh
+                                break
+
+                groups = zh.get("hostgroups", []) or zh.get("groups", [])
+                zh["group_names_lower"] = [g.get("name", "").strip().lower() for g in groups if isinstance(g, dict) and g.get("name")]
+
+        # Classify ALL devices in queryset for global Top Cards and Filtering
+        all_nb_values = list(qs.values('id', 'name', 'status', 'role__name', 'primary_ip4__address', 'primary_ip6__address'))
+        
+        global_matched_ids = set()
+        global_value_mismatch_ids = set()
+        global_not_in_zabbix_ids = set()
+
+        for d in all_nb_values:
+            d_id = d['id']
+            d_name = (d['name'] or '').strip().lower()
+            d_ip = ''
+            if d['primary_ip4__address']:
+                d_ip = str(d['primary_ip4__address']).split('/')[0]
+            elif d['primary_ip6__address']:
+                d_ip = str(d['primary_ip6__address']).split('/')[0]
+
+            d_status = str(d['status']).capitalize() if d['status'] else "Active"
+            d_role = (d['role__name'] or '').strip()
+
+            zh = zabbix_by_name.get(d_name) or zabbix_by_vis.get(d_name) or (zabbix_ip_map.get(d_ip) if d_ip else None)
+
+            if not zh:
+                global_not_in_zabbix_ids.add(d_id)
+                continue
+
+            is_mismatch = False
+
+            # Check 1: Name
+            zh_tech = (zh.get('host') or '').strip().lower()
+            zh_vis = (zh.get('name') or '').strip().lower()
+            if d_name != zh_tech and d_name != zh_vis:
+                is_mismatch = True
+
+            # Check 2: IP
+            if not is_mismatch and d_ip and zh.get('ip') and d_ip != zh['ip']:
+                is_mismatch = True
+
+            # Check 3: Status (Active <-> Monitored '0', Non-Active <-> Disabled '1')
+            if not is_mismatch:
+                zh_st = str(zh.get('status', '0'))
+                if d_status.lower() == 'active' and zh_st != '0':
+                    is_mismatch = True
+                elif d_status.lower() != 'active' and zh_st != '1':
+                    is_mismatch = True
+
+            # Check 4: Host Group
+            if not is_mismatch and d_role:
+                if d_role.lower() not in zh.get('group_names_lower', []):
+                    is_mismatch = True
+
+            if is_mismatch:
+                global_value_mismatch_ids.add(d_id)
+            else:
+                global_matched_ids.add(d_id)
+
+        # 4. Filter Queryset based on status_filter
+        if status_filter in ['synced', 'active', 'matched']:
+            filtered_qs = qs.filter(id__in=global_matched_ids)
+        elif status_filter in ['value_mismatch', 'value', 'mismatch', 'pending']:
+            filtered_qs = qs.filter(id__in=global_value_mismatch_ids)
+        elif status_filter in ['not_in_zabbix', 'missing']:
+            filtered_qs = qs.filter(id__in=global_not_in_zabbix_ids)
+        else:
+            filtered_qs = qs
+
+        # 5. Pagination Setup
         per_page_param = request.GET.get('per_page', '50')
         page_param = request.GET.get('page', '1')
 
@@ -632,7 +748,7 @@ class ZabbixHostsView(View):
         except ValueError:
             page_num = 1
 
-        paginator = Paginator(qs, per_page)
+        paginator = Paginator(filtered_qs, per_page)
         try:
             page_obj = paginator.page(page_num)
         except Exception:
@@ -641,19 +757,12 @@ class ZabbixHostsView(View):
 
         page_devices = list(page_obj.object_list)
         page_names = [d.name for d in page_devices if d.name]
-        page_ips = []
-        for d in page_devices:
-            if d.primary_ip4:
-                page_ips.append(str(d.primary_ip4.address).split('/')[0])
-            elif d.primary_ip6:
-                page_ips.append(str(d.primary_ip6.address).split('/')[0])
 
-        # 4. TARGETED ZABBIX FETCH: Query Zabbix ON DEMAND ONLY for current page's devices
-        zabbix_hosts = []
-        zabbix_error = None
+        # 6. TARGETED FULL FETCH for current page's 50 devices (to get templates, macros, proxy details)
+        page_zabbix_details = {}
         if page_names:
             try:
-                res = api.call('host.get', {
+                res_details = api.call('host.get', {
                     'filter': {'host': page_names},
                     'selectInterfaces': ['interfaceid', 'type', 'main', 'ip', 'port', 'details'],
                     'selectParentTemplates': ['templateid', 'name'],
@@ -661,53 +770,17 @@ class ZabbixHostsView(View):
                     'selectMacros': ['macro', 'value'],
                     'output': ['hostid', 'host', 'name', 'status', 'proxy_hostid', 'proxy_groupid', 'monitored_by']
                 })
-                if isinstance(res, list):
-                    zabbix_hosts.extend(res)
-                elif isinstance(res, dict) and "error" in res:
-                    zabbix_error = str(res["error"])
+                if isinstance(res_details, list):
+                    for zh in res_details:
+                        if isinstance(zh, dict):
+                            h_name = (zh.get('host') or '').strip().lower()
+                            h_vis = (zh.get('name') or '').strip().lower()
+                            if h_name:
+                                page_zabbix_details[h_name] = zh
+                            if h_vis:
+                                page_zabbix_details[h_vis] = zh
             except Exception as e:
-                logger.error(f"Error fetching targeted Zabbix hosts by name: {e}")
-
-            found_names = {h.get('host', '').strip().lower() for h in zabbix_hosts if isinstance(h, dict)}
-            missing_names = [n for n in page_names if n.strip().lower() not in found_names]
-            if missing_names and page_ips:
-                try:
-                    res_ip = api.call('host.get', {
-                        'filter': {'ip': page_ips},
-                        'selectInterfaces': ['interfaceid', 'type', 'main', 'ip', 'port', 'details'],
-                        'selectParentTemplates': ['templateid', 'name'],
-                        'selectHostGroups': ['groupid', 'name'],
-                        'selectMacros': ['macro', 'value'],
-                        'output': ['hostid', 'host', 'name', 'status', 'proxy_hostid', 'proxy_groupid', 'monitored_by']
-                    })
-                    if isinstance(res_ip, list):
-                        for h in res_ip:
-                            if isinstance(h, dict) and h.get('host', '').strip().lower() not in found_names:
-                                zabbix_hosts.append(h)
-                except Exception as e:
-                    logger.error(f"Error fetching targeted Zabbix hosts by IP: {e}")
-
-        # Build Lookups
-        zabbix_name_map = {}
-        zabbix_ip_map = {}
-        if isinstance(zabbix_hosts, list):
-            for zh in zabbix_hosts:
-                if not isinstance(zh, dict):
-                    continue
-                zh_tech = (zh.get("host") or "").strip().lower()
-                zh_vis = (zh.get("name") or "").strip().lower()
-                if zh_tech:
-                    zabbix_name_map[zh_tech] = zh
-                if zh_vis:
-                    zabbix_name_map[zh_vis] = zh
-
-                ifaces = zh.get("interfaces", [])
-                if isinstance(ifaces, list):
-                    for ifc in ifaces:
-                        if isinstance(ifc, dict):
-                            ip_addr = (ifc.get("ip") or "").strip()
-                            if ip_addr and ip_addr not in ["0.0.0.0", "127.0.0.1"]:
-                                zabbix_ip_map[ip_addr] = zh
+                logger.error(f"Error fetching detailed Zabbix info for page: {e}")
 
         # Fast Proxy Map
         proxy_map = {}
@@ -722,10 +795,8 @@ class ZabbixHostsView(View):
         except Exception:
             pass
 
-        # 5. Build Page Blocks and Evaluate All 5 Comparisons
+        # 7. Build Page Blocks for rendering
         page_blocks = []
-        page_matched_count = 0
-        page_mismatch_count = 0
 
         for dev in page_devices:
             nb_name = dev.name or f"Device-{dev.pk}"
@@ -739,7 +810,7 @@ class ZabbixHostsView(View):
             nb_role = dev.role.name if dev.role else "—"
 
             nb_name_lower = nb_name.strip().lower()
-            matching_zabbix_host = zabbix_name_map.get(nb_name_lower) or zabbix_ip_map.get(nb_ip)
+            matching_zabbix_host = page_zabbix_details.get(nb_name_lower) or zabbix_by_name.get(nb_name_lower) or zabbix_by_vis.get(nb_name_lower) or zabbix_ip_map.get(nb_ip)
 
             item = {
                 "netbox_name": nb_name,
@@ -844,7 +915,7 @@ class ZabbixHostsView(View):
                     if not any(nb_role.lower() == zg.lower() for zg in item["zabbix_hostgroups"]):
                         mismatch_reasons.append(f"Host Group Mismatch (Missing group: {nb_role})")
 
-                # COMPARISON 5: Attached Templates Check (Inherited from NetBox Role settings)
+                # Templates for display
                 all_t_objs = []
                 for k in ["parentTemplates", "templates", "inheritedTemplates"]:
                     t_list = zh_target.get(k)
@@ -862,9 +933,6 @@ class ZabbixHostsView(View):
 
                 item["zabbix_templates"] = template_names
 
-                role_cfg = role_settings_map.get(nb_role, {})
-                # Note: Templates are displayed for reference but no longer trigger mismatch as per requirement
-
                 proxy_id = str(zh_target.get("proxyid") or zh_target.get("proxy_hostid") or "0")
                 proxy_group_id = str(zh_target.get("proxy_groupid") or "0")
                 monitored_by = str(zh_target.get("monitored_by") or "0")
@@ -881,48 +949,16 @@ class ZabbixHostsView(View):
 
             if len(mismatch_reasons) == 0:
                 item["match_status"] = "matched"
-                page_matched_count += 1
             elif not item["zabbix_exists"]:
                 item["match_status"] = "not_in_zabbix"
                 item["mismatch_reasons"] = mismatch_reasons
-                page_mismatch_count += 1
             else:
                 item["match_status"] = "value_mismatch"
                 item["mismatch_reasons"] = mismatch_reasons
-                page_mismatch_count += 1
 
             page_blocks.append(item)
 
-        # 6. Apply status filter
-        if status_filter in ['synced', 'active', 'matched']:
-            filtered_blocks = [b for b in page_blocks if b['match_status'] == 'matched']
-        elif status_filter in ['value_mismatch', 'value', 'mismatch', 'pending']:
-            filtered_blocks = [b for b in page_blocks if b['match_status'] == 'value_mismatch']
-        elif status_filter in ['not_in_zabbix', 'missing']:
-            filtered_blocks = [b for b in page_blocks if b['match_status'] == 'not_in_zabbix']
-        else:
-            filtered_blocks = page_blocks
-
-        page_obj.object_list = filtered_blocks
-
-        # Count granular metrics for top cards
-        value_mismatch_count = len([b for b in page_blocks if b['match_status'] == 'value_mismatch'])
-        not_in_zabbix_count = len([b for b in page_blocks if b['match_status'] == 'not_in_zabbix'])
-        matched_count = len([b for b in page_blocks if b['match_status'] == 'matched'])
-
-        try:
-            z_count_res = api.call('host.get', {'countOutput': True})
-            if isinstance(z_count_res, (int, str)) and str(z_count_res).isdigit():
-                z_total = int(z_count_res)
-                if not status_filter:
-                    matched_count = min(total_devices, z_total)
-                    mismatch_count = max(0, total_devices - matched_count)
-                else:
-                    mismatch_count = page_mismatch_count
-            else:
-                mismatch_count = page_mismatch_count
-        except Exception:
-            mismatch_count = page_mismatch_count
+        page_obj.object_list = page_blocks
 
         headers = [
             "Source",
@@ -941,10 +977,10 @@ class ZabbixHostsView(View):
             'page_obj': page_obj,
             'per_page': per_page_param if per_page_param.lower() == 'all' else per_page,
             'total_devices': total_devices,
-            'synced_devices': matched_count,
-            'value_mismatch_devices': value_mismatch_count,
-            'not_in_zabbix_devices': not_in_zabbix_count,
-            'devices_to_sync': mismatch_count,
+            'synced_devices': len(global_matched_ids),
+            'value_mismatch_devices': len(global_value_mismatch_ids),
+            'not_in_zabbix_devices': len(global_not_in_zabbix_ids),
+            'devices_to_sync': len(global_value_mismatch_ids) + len(global_not_in_zabbix_ids),
             'status_filter': status_filter,
             'has_status': True,
             'is_hosts_view': True,
