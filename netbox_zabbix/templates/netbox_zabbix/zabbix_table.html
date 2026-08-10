@@ -14,9 +14,10 @@
 {% endif %}
 
 <!-- Top Summary Cards -->
-{% if has_status %}
+{% if is_hosts_view %}
     <div class="row mb-4">
-        <div class="col-md-4">
+        <!-- 1. Total Devices -->
+        <div class="col-md-3">
             <a href="?{% if q %}q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if not status_filter %}border border-primary border-2{% else %}border-0{% endif %}" title="Click to view all items">
                 <div class="card-body d-flex align-items-center">
                     <div class="avatar bg-primary text-white p-3 rounded-circle me-3">
@@ -30,7 +31,8 @@
                 </div>
             </a>
         </div>
-        <div class="col-md-4">
+        <!-- 2. Matched in Zabbix -->
+        <div class="col-md-3">
             <a href="?status=matched{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'matched' or status_filter == 'synced' %}border border-success border-2{% else %}border-0{% endif %}" title="Click to view matched items">
                 <div class="card-body d-flex align-items-center">
                     <div class="avatar bg-success text-white p-3 rounded-circle me-3">
@@ -39,27 +41,43 @@
                     <div>
                         <div class="fs-6 text-muted text-uppercase fw-semibold">Matched in Zabbix</div>
                         <div class="fs-2 fw-bold text-success">{{ synced_devices }}</div>
-                        <div class="fs-7 text-muted">Name, IP, Status & Host Group match (Click to filter)</div>
+                        <div class="fs-7 text-muted">Name, IP, Status & Group match</div>
                     </div>
                 </div>
             </a>
         </div>
-        <div class="col-md-4">
-            <a href="?status=mismatch{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'mismatch' or status_filter == 'pending' %}border border-danger border-2{% else %}border-0{% endif %}" title="Click to view mismatched or missing items">
+        <!-- 3. Value Mismatch -->
+        <div class="col-md-3">
+            <a href="?status=value_mismatch{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'value_mismatch' or status_filter == 'mismatch' %}border border-warning border-2{% else %}border-0{% endif %}" title="Click to view hosts with parameter value mismatches">
                 <div class="card-body d-flex align-items-center">
-                    <div class="avatar bg-danger text-white p-3 rounded-circle me-3">
+                    <div class="avatar bg-warning text-dark p-3 rounded-circle me-3">
                         <i class="mdi mdi-alert-circle fs-2"></i>
                     </div>
                     <div>
-                        <div class="fs-6 text-muted text-uppercase fw-semibold">Mismatch / Not in Zabbix</div>
-                        <div class="fs-2 fw-bold text-danger">{{ devices_to_sync }}</div>
-                        <div class="fs-7 text-muted">Parameter mismatch or missing (Click to filter)</div>
+                        <div class="fs-6 text-muted text-uppercase fw-semibold">Value Mismatch</div>
+                        <div class="fs-2 fw-bold text-warning">{{ value_mismatch_devices }}</div>
+                        <div class="fs-7 text-muted">Parameter value mismatch (Click)</div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        <!-- 4. Not in Zabbix -->
+        <div class="col-md-3">
+            <a href="?status=not_in_zabbix{% if q %}&q={{ q }}{% endif %}" class="card card-sm bg-body-tertiary text-decoration-none shadow-sm {% if status_filter == 'not_in_zabbix' or status_filter == 'missing' %}border border-danger border-2{% else %}border-0{% endif %}" title="Click to view hosts missing in Zabbix">
+                <div class="card-body d-flex align-items-center">
+                    <div class="avatar bg-danger text-white p-3 rounded-circle me-3">
+                        <i class="mdi mdi-close-circle fs-2"></i>
+                    </div>
+                    <div>
+                        <div class="fs-6 text-muted text-uppercase fw-semibold">Not in Zabbix</div>
+                        <div class="fs-2 fw-bold text-danger">{{ not_in_zabbix_devices }}</div>
+                        <div class="fs-7 text-muted">Hosts missing in Zabbix (Click)</div>
                     </div>
                 </div>
             </a>
         </div>
     </div>
-{% else %}
+{% elif has_status %}
     <!-- Single Top Card for Categories Without Status (Templates, Macros, Host Groups, etc.) -->
     <div class="row mb-4">
         <div class="col-md-12">
@@ -266,9 +284,9 @@
                                         <span class="badge bg-success-subtle text-dark border border-success-subtle fw-bold w-100 p-2" style="font-size: 0.8rem;">
                                             <i class="mdi mdi-check-circle me-1"></i> Matched
                                         </span>
-                                    {% else %}
-                                        <span class="badge bg-danger-subtle text-dark border border-danger-subtle fw-bold w-100 p-2" style="font-size: 0.8rem;">
-                                            <i class="mdi mdi-alert-circle me-1"></i> Mismatched
+                                    {% elif item.match_status == "value_mismatch" %}
+                                        <span class="badge bg-warning-subtle text-dark border border-warning-subtle fw-bold w-100 p-2" style="font-size: 0.8rem;">
+                                            <i class="mdi mdi-alert-circle me-1"></i> Value Mismatch
                                         </span>
                                         {% if item.mismatch_reasons %}
                                             <div class="text-danger text-start small w-100 my-1 p-1 bg-white border border-danger-subtle rounded" style="font-size: 0.72rem; line-height: 1.25;">
@@ -282,6 +300,17 @@
                                             <input type="hidden" name="device_name" value="{{ item.netbox_name }}" />
                                             <button type="submit" class="btn btn-sm btn-success fw-bold text-white w-100 py-1" style="font-size: 0.78rem;" title="Sync / Push Device from NetBox to Zabbix">
                                                 <i class="mdi mdi-cloud-upload me-1"></i> Sync to Zabbix
+                                            </button>
+                                        </form>
+                                    {% else %}
+                                        <span class="badge bg-danger-subtle text-dark border border-danger-subtle fw-bold w-100 p-2" style="font-size: 0.8rem;">
+                                            <i class="mdi mdi-close-circle me-1"></i> Not in Zabbix
+                                        </span>
+                                        <form action="{% url 'plugins:netbox_zabbix:push_device' %}" method="post" class="w-100">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="device_name" value="{{ item.netbox_name }}" />
+                                            <button type="submit" class="btn btn-sm btn-success fw-bold text-white w-100 py-1" style="font-size: 0.78rem;" title="Push Device from NetBox to Zabbix">
+                                                <i class="mdi mdi-cloud-upload me-1"></i> Push to Zabbix
                                             </button>
                                         </form>
                                     {% endif %}

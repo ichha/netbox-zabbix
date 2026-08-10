@@ -882,35 +882,46 @@ class ZabbixHostsView(View):
             if len(mismatch_reasons) == 0:
                 item["match_status"] = "matched"
                 page_matched_count += 1
+            elif not item["zabbix_exists"]:
+                item["match_status"] = "not_in_zabbix"
+                item["mismatch_reasons"] = mismatch_reasons
+                page_mismatch_count += 1
             else:
-                item["match_status"] = "mismatch"
+                item["match_status"] = "value_mismatch"
                 item["mismatch_reasons"] = mismatch_reasons
                 page_mismatch_count += 1
 
             page_blocks.append(item)
 
-        # 6. Apply status filter if ?status=matched or ?status=mismatch was clicked
+        # 6. Apply status filter
         if status_filter in ['synced', 'active', 'matched']:
             filtered_blocks = [b for b in page_blocks if b['match_status'] == 'matched']
-        elif status_filter in ['pending', 'inactive', 'mismatch', 'disabled', 'not_in_zabbix']:
-            filtered_blocks = [b for b in page_blocks if b['match_status'] == 'mismatch']
+        elif status_filter in ['value_mismatch', 'value', 'mismatch', 'pending']:
+            filtered_blocks = [b for b in page_blocks if b['match_status'] == 'value_mismatch']
+        elif status_filter in ['not_in_zabbix', 'missing']:
+            filtered_blocks = [b for b in page_blocks if b['match_status'] == 'not_in_zabbix']
         else:
             filtered_blocks = page_blocks
 
         page_obj.object_list = filtered_blocks
 
-        # Calculate counts for Top Cards
+        # Count granular metrics for top cards
+        value_mismatch_count = len([b for b in page_blocks if b['match_status'] == 'value_mismatch'])
+        not_in_zabbix_count = len([b for b in page_blocks if b['match_status'] == 'not_in_zabbix'])
+        matched_count = len([b for b in page_blocks if b['match_status'] == 'matched'])
+
         try:
             z_count_res = api.call('host.get', {'countOutput': True})
             if isinstance(z_count_res, (int, str)) and str(z_count_res).isdigit():
                 z_total = int(z_count_res)
-                matched_count = page_matched_count if status_filter else min(total_devices, z_total)
-                mismatch_count = page_mismatch_count if status_filter else max(0, total_devices - matched_count)
+                if not status_filter:
+                    matched_count = min(total_devices, z_total)
+                    mismatch_count = max(0, total_devices - matched_count)
+                else:
+                    mismatch_count = page_mismatch_count
             else:
-                matched_count = page_matched_count
                 mismatch_count = page_mismatch_count
         except Exception:
-            matched_count = page_matched_count
             mismatch_count = page_mismatch_count
 
         headers = [
@@ -931,6 +942,8 @@ class ZabbixHostsView(View):
             'per_page': per_page_param if per_page_param.lower() == 'all' else per_page,
             'total_devices': total_devices,
             'synced_devices': matched_count,
+            'value_mismatch_devices': value_mismatch_count,
+            'not_in_zabbix_devices': not_in_zabbix_count,
             'devices_to_sync': mismatch_count,
             'status_filter': status_filter,
             'has_status': True,
