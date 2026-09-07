@@ -6,6 +6,8 @@ class NetBoxZabbixConfig(PluginConfig):
     verbose_name = 'Zabbix Integration'
     description = 'A NetBox plugin to synchronize data with Zabbix.'
     version = '0.1.0'
+    author = 'Nepal Telecom'
+    author_email = 'info@ntc.net.np'
     base_url = 'zabbix'
 
     def ready(self):

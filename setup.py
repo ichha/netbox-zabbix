@@ -7,8 +7,8 @@ setup(
     install_requires=[
         'requests',
     ],
-    author='Antigravity',
-    author_email='antigravity@example.com',
+    author='Nepal Telecom',
+    author_email='info@ntc.net.np',
     packages=find_packages(),
     include_package_data=True,
     package_data={
