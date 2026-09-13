@@ -4,6 +4,7 @@ from django.contrib import messages
 from django.core.paginator import Paginator
 from django.http import JsonResponse
 from django.db.models import Q
+from django.contrib.auth.mixins import PermissionRequiredMixin
 import logging
 from .zabbix_api import ZabbixAPI
 from .template_storage import (
@@ -98,7 +99,9 @@ def process_table_data(request, items, headers, title, default_per_page=50, has_
     return res
 
 
-class ZabbixServersView(View):
+class ZabbixServersView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
+
     def get(self, request):
         api = ZabbixAPI()
         version, error = api.get_api_version()
@@ -162,7 +165,9 @@ class ZabbixServersView(View):
         return render(request, 'netbox_zabbix/zabbix_server.html', context)
 
 
-class ZabbixProxiesView(View):
+class ZabbixProxiesView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
+
     def get(self, request):
         api = ZabbixAPI()
         proxies = api.get_proxies()
@@ -206,7 +211,9 @@ class ZabbixProxiesView(View):
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
-class ZabbixProxyGroupsView(View):
+class ZabbixProxyGroupsView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
+
     def get(self, request):
         api = ZabbixAPI()
         groups = api.get_proxy_groups()
@@ -230,7 +237,9 @@ class ZabbixProxyGroupsView(View):
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
-class ZabbixTemplatesView(View):
+class ZabbixTemplatesView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
+
     def get(self, request):
         api = ZabbixAPI()
         templates = api.get_templates()
@@ -255,7 +264,9 @@ class ZabbixTemplatesView(View):
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
-class ZabbixTemplateGroupsView(View):
+class ZabbixTemplateGroupsView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
+
     def get(self, request):
         api = ZabbixAPI()
         groups = api.get_template_groups()
@@ -278,7 +289,9 @@ class ZabbixTemplateGroupsView(View):
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
-class ZabbixMacrosView(View):
+class ZabbixMacrosView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
+
     def get(self, request):
         api = ZabbixAPI()
         macros = api.get_macros()
@@ -302,7 +315,9 @@ class ZabbixMacrosView(View):
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
-class ZabbixTagsView(View):
+class ZabbixTagsView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
+
     def get(self, request):
         api = ZabbixAPI()
         tags = api.get_tags()
@@ -325,7 +340,9 @@ class ZabbixTagsView(View):
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
-class ZabbixHostGroupsView(View):
+class ZabbixHostGroupsView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
+
     def get(self, request):
         api = ZabbixAPI()
         zabbix_groups = api.get_host_groups()
@@ -460,7 +477,9 @@ class ZabbixHostGroupsView(View):
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
-class ZabbixMapTemplatesView(View):
+class ZabbixMapTemplatesView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.change_zabbixhostgrouptemplate'
+
     def post(self, request):
         role_name = request.POST.get('role_name')
         template_ids = request.POST.getlist('template_ids')
@@ -520,7 +539,9 @@ class ZabbixMapTemplatesView(View):
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
-class ZabbixClearSettingsView(View):
+class ZabbixClearSettingsView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.change_zabbixhostgrouptemplate'
+
     def post(self, request):
         role_name = request.POST.get('role_name')
         if not role_name:
@@ -532,7 +553,9 @@ class ZabbixClearSettingsView(View):
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
-class ZabbixRemoveSettingFieldView(View):
+class ZabbixRemoveSettingFieldView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.change_zabbixhostgrouptemplate'
+
     def post(self, request):
         role_name = request.POST.get('role_name')
         field_name = request.POST.get('field_name')
@@ -545,7 +568,9 @@ class ZabbixRemoveSettingFieldView(View):
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
-class ZabbixRemoveTemplateView(View):
+class ZabbixRemoveTemplateView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.change_zabbixhostgrouptemplate'
+
     def post(self, request):
         role_name = request.POST.get('role_name')
         template_id = request.POST.get('template_id')
@@ -571,7 +596,9 @@ class ZabbixRemoveTemplateView(View):
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
-class ZabbixCreateHostGroupView(View):
+class ZabbixCreateHostGroupView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.change_zabbixhostgrouptemplate'
+
     def post(self, request):
         role_name = request.POST.get('role_name')
         
@@ -587,7 +614,9 @@ class ZabbixCreateHostGroupView(View):
         return redirect('plugins:netbox_zabbix:hostgroups')
 
 
-class ZabbixHostsView(View):
+class ZabbixHostsView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
+
     def get(self, request):
         api = ZabbixAPI()
         from dcim.models import Device
@@ -990,7 +1019,9 @@ class ZabbixHostsView(View):
         return render(request, 'netbox_zabbix/zabbix_table.html', context)
 
 
-class ZabbixPushDeviceView(View):
+class ZabbixPushDeviceView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.change_zabbixhostgrouptemplate'
+
     def post(self, request):
         device_names = request.POST.getlist('device_names')
         single_name = request.POST.get('device_name')
@@ -1037,7 +1068,9 @@ class ZabbixPushDeviceView(View):
 
 
 
-class ZabbixSyncRoleView(View):
+class ZabbixSyncRoleView(PermissionRequiredMixin, View):
+    permission_required = 'netbox_zabbix.change_zabbixhostgrouptemplate'
+
     def post(self, request):
         host_id = request.POST.get('host_id')
         role_name = request.POST.get('role_name')
@@ -1066,8 +1099,9 @@ class ZabbixSyncRoleView(View):
         return redirect('plugins:netbox_zabbix:hosts')
 
 
-class ZabbixBulkPushView(View):
+class ZabbixBulkPushView(PermissionRequiredMixin, View):
     """Bulk push all devices for a specific role to Zabbix in batches."""
+    permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
     
     def get(self, request):
         """Show bulk push page with roles and device counts."""
@@ -1121,6 +1155,8 @@ class ZabbixBulkPushView(View):
     
     def post(self, request):
         """Execute bulk push for a role. Returns JSON progress result."""
+        if not request.user.has_perm('netbox_zabbix.change_zabbixhostgrouptemplate'):
+            return JsonResponse({'success': False, 'error': 'Permission denied: Change permission required.'}, status=403)
         import json
         from dcim.models import Device
         from .signals import push_device_to_zabbix
