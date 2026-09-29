@@ -1624,11 +1624,15 @@ class ZabbixBulkPushTagsView(PermissionRequiredMixin, View):
                 'tags': sorted(list(tags_by_val[val])),
             })
 
+        from .models import ZabbixSyncState
+        sync_enabled = ZabbixSyncState.is_enabled()
+
         return render(request, 'netbox_zabbix/bulk_push_tags.html', {
             'districts_data': districts_data,
             'total_districts': len(districts_data),
             'total_sites': total_sites_all,
             'total_devices': total_devices_all,
+            'sync_enabled': sync_enabled,
             'title': 'Bulk Push Tags by District',
         })
 
@@ -1639,6 +1643,17 @@ class ZabbixBulkPushTagsView(PermissionRequiredMixin, View):
         """
         if not request.user.has_perm('netbox_zabbix.change_zabbixhostgrouptemplate'):
             return JsonResponse({'success': False, 'error': 'Permission denied: Change permission required.'}, status=403)
+
+        action = request.POST.get('action', 'push')
+
+        # Handle toggle auto-sync
+        if action == 'toggle_sync':
+            from .models import ZabbixSyncState
+            state = ZabbixSyncState.get_state()
+            state.auto_sync_enabled = not state.auto_sync_enabled
+            state.save()
+            new_state = 'enabled' if state.auto_sync_enabled else 'disabled'
+            return JsonResponse({'success': True, 'sync_enabled': state.auto_sync_enabled, 'message': f'Auto-sync {new_state}'})
 
         from dcim.models import Site, Device
         from .signals import build_zabbix_tags, sync_site_tags_to_devices
