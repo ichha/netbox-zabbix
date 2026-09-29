@@ -99,7 +99,7 @@
               {% endif %}
             </td>
             <td class="text-end">
-              <button class="btn btn-sm btn-primary fw-bold px-3" onclick="pushDistrictTags('{{ d.name|escapejs }}', this)" id="btn-{{ forloop.counter }}" {% if d.device_count == 0 %}disabled title="No devices in this district"{% endif %}>
+              <button class="btn btn-sm btn-primary fw-bold px-3" onclick="pushDistrictTags('{{ d.name|escapejs }}', '{{ d.choice_value|escapejs }}', this)" id="btn-{{ forloop.counter }}" {% if d.device_count == 0 %}disabled title="No devices in this district"{% endif %}>
                 <i class="mdi mdi-tag-plus me-1"></i>Push Tags
               </button>
             </td>
@@ -144,13 +144,14 @@ function filterDistricts() {
   });
 }
 
-function pushDistrictTags(districtName, btn) {
+function pushDistrictTags(districtName, choiceValue, btn) {
   const originalHtml = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Pushing...';
 
   const formData = new FormData();
   formData.append('district', districtName);
+  formData.append('choice_value', choiceValue || '');
   formData.append('csrfmiddlewaretoken', CSRF);
 
   fetch('{% url "plugins:netbox_zabbix:bulk_push_tags" %}', {

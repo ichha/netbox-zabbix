@@ -1472,76 +1472,142 @@ class ZabbixBulkPushView(PermissionRequiredMixin, View):
         })
 
 
+# 77 Districts of Nepal mapping fallback
+FALLBACK_77_DISTRICTS = [
+    ("choice1", "Taplejung"), ("choice2", "Panchthar"), ("choice3", "Ilam"), ("choice4", "Jhapa"),
+    ("choice5", "Morang"), ("choice6", "Sunsari"), ("choice7", "Dhankuta"), ("choice8", "Sankhuwasabha"),
+    ("choice9", "Bhojpur"), ("choice10", "Tehrathum"), ("choice11", "Okhaldhunga"), ("choice12", "Khotang"),
+    ("choice13", "Solukhumbu"), ("choice14", "Udayapur"), ("choice15", "Saptari"), ("choice16", "Siraha"),
+    ("choice17", "Parsa"), ("choice18", "Bara"), ("choice19", "Rautahat"), ("choice20", "Sarlahi"),
+    ("choice21", "Dhanusha"), ("choice22", "Mahottari"), ("choice23", "Sindhuli"), ("choice24", "Ramechhap"),
+    ("choice25", "Dolakha"), ("choice26", "Bhaktapur"), ("choice27", "Dhading"), ("choice28", "Kathmandu"),
+    ("choice29", "Kavrepalanchok"), ("choice30", "Lalitpur"), ("choice31", "Nuwakot"), ("choice32", "Rasuwa"),
+    ("choice33", "Sindhupalchok"), ("choice34", "Chitwan"), ("choice35", "Makwanpur"), ("choice36", "Gorkha"),
+    ("choice37", "Kaski"), ("choice38", "Lamjung"), ("choice39", "Syangja"), ("choice40", "Tanahun"),
+    ("choice41", "Manang"), ("choice42", "Mustang"), ("choice43", "Myagdi"), ("choice44", "Parbat"),
+    ("choice45", "Baglung"), ("choice46", "Kapilvastu"), ("choice47", "Nawalpur"), ("choice48", "Parasi"),
+    ("choice49", "Rupandehi"), ("choice50", "Arghakhanchi"), ("choice51", "Gulmi"), ("choice52", "Palpa"),
+    ("choice53", "Dang"), ("choice54", "Pyuthan"), ("choice55", "Rolpa"), ("choice56", "Rukum East"),
+    ("choice57", "Banke"), ("choice58", "Bardiya"), ("choice59", "Rukum West"), ("choice60", "Salyan"),
+    ("choice61", "Dolpa"), ("choice62", "Humla"), ("choice63", "Jumla"), ("choice64", "Kalikot"),
+    ("choice65", "Mugu"), ("choice66", "Dailekh"), ("choice67", "Jajarkot"), ("choice68", "Surkhet"),
+    ("choice69", "Bajhang"), ("choice70", "Bajura"), ("choice71", "Achham"), ("choice72", "Doti"),
+    ("choice73", "Kailali"), ("choice74", "Baitadi"), ("choice75", "Dadeldhura"), ("choice76", "Darchula"),
+    ("choice77", "Kanchanpur"),
+]
+
+
 class ZabbixBulkPushTagsView(PermissionRequiredMixin, View):
     """
-    Bulk push tags to Zabbix hosts based on NetBox District.
+    Bulk push tags to Zabbix hosts based on NetBox District (77 districts).
+    Resolves human-readable labels from CustomFieldChoiceSet.
     """
     permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
 
     @staticmethod
-    def get_district(site):
-        if not site:
-            return "Unassigned"
-        cf_data = getattr(site, 'custom_field_data', {}) or {}
-        for k in ['district', 'District', 'DISTRICT']:
-            v = cf_data.get(k)
-            if v:
-                if isinstance(v, dict):
-                    return str(v.get('label') or v.get('value') or v.get('name') or '').strip()
-                return str(v).strip()
-        if hasattr(site, 'district') and getattr(site, 'district'):
-            d = getattr(site, 'district')
-            return str(getattr(d, 'name', d)).strip()
-        if getattr(site, 'region', None):
-            return str(site.region.name).strip()
-        return "Unassigned"
+    def get_district_choices():
+        """
+        Retrieves the 77 districts from NetBox CustomFieldChoiceSet (name='district').
+        Returns:
+            choices_list: [{'value': 'choice1', 'label': 'Taplejung'}, ...] (sorted by label)
+            val_to_lbl: {'choice1': 'Taplejung', ...}
+            lbl_to_val: {'taplejung': 'choice1', ...}
+        """
+        val_to_lbl = {}
+        lbl_to_val = {}
+
+        try:
+            from extras.models import CustomFieldChoiceSet
+            cs = CustomFieldChoiceSet.objects.filter(name__iexact='district').first()
+            if cs:
+                raw_choices = getattr(cs, 'extra_choices', None) or getattr(cs, 'choices', None) or []
+                for item in raw_choices:
+                    if isinstance(item, (list, tuple)) and len(item) >= 2:
+                        v, l = str(item[0]).strip(), str(item[1]).strip()
+                        val_to_lbl[v] = l
+                        lbl_to_val[l.lower()] = v
+                    elif isinstance(item, dict):
+                        v = str(item.get('value') or item.get('id') or '').strip()
+                        l = str(item.get('label') or item.get('name') or v).strip()
+                        if v and l:
+                            val_to_lbl[v] = l
+                            lbl_to_val[l.lower()] = v
+        except Exception as e:
+            logger.debug(f"Could not load choices from CustomFieldChoiceSet: {e}")
+
+        # Fallback to standard 77 if choice set is not present
+        if not val_to_lbl:
+            for v, l in FALLBACK_77_DISTRICTS:
+                val_to_lbl[v] = l
+                lbl_to_val[l.lower()] = v
+
+        choices_list = [{'value': v, 'label': l} for v, l in val_to_lbl.items()]
+        choices_list.sort(key=lambda x: x['label'].lower())
+
+        return choices_list, val_to_lbl, lbl_to_val
 
     def get(self, request):
-        """Show districts with site counts, device counts, and associated tags."""
+        """Show exactly 77 districts with site counts, device counts, and associated tags."""
         from dcim.models import Site, Device
-        
+
+        choices_list, val_to_lbl, lbl_to_val = self.get_district_choices()
+
+        # Fetch all NetBox Sites with tags
         all_sites = list(Site.objects.all().prefetch_related('tags'))
-        
-        districts_map = {}
+
+        sites_by_val = {d['value']: [] for d in choices_list}
+        tags_by_val = {d['value']: set() for d in choices_list}
+
         for site in all_sites:
-            dist = self.get_district(site) or "Unassigned"
-            if dist not in districts_map:
-                districts_map[dist] = {
-                    'name': dist,
-                    'sites': [],
-                    'site_ids': [],
-                    'tags': set(),
-                }
-            districts_map[dist]['sites'].append(site.name)
-            districts_map[dist]['site_ids'].append(site.pk)
-            for t in site.tags.all():
-                t_name = getattr(t, 'name', str(t)).strip()
-                if t_name:
-                    districts_map[dist]['tags'].add(t_name)
+            cf_data = getattr(site, 'custom_field_data', {}) or {}
+            raw_val = str(cf_data.get('district') or cf_data.get('District') or cf_data.get('DISTRICT') or '').strip()
 
+            target_val = None
+            if raw_val in val_to_lbl:
+                target_val = raw_val
+            elif raw_val.lower() in lbl_to_val:
+                target_val = lbl_to_val[raw_val.lower()]
+
+            if target_val and target_val in sites_by_val:
+                sites_by_val[target_val].append(site)
+                for t in site.tags.all():
+                    t_name = getattr(t, 'name', str(t)).strip()
+                    if t_name:
+                        tags_by_val[target_val].add(t_name)
+
+        # Build final 77 districts data
         districts_data = []
+        total_sites_all = 0
         total_devices_all = 0
-        total_sites_all = len(all_sites)
 
-        for dist_name, d_info in sorted(districts_map.items(), key=lambda x: x[0]):
-            site_ids = d_info['site_ids']
-            dev_qs = Device.objects.filter(site_id__in=site_ids)
-            device_count = dev_qs.count()
-            total_devices_all += device_count
+        for d in choices_list:
+            val = d['value']
+            lbl = d['label']
+            sites = sites_by_val[val]
+            site_ids = [s.pk for s in sites]
+            total_sites_all += len(sites)
 
-            if not d_info['tags']:
-                for d in dev_qs.prefetch_related('tags')[:20]:
-                    for dt in d.tags.all():
-                        dt_name = getattr(dt, 'name', str(dt)).strip()
-                        if dt_name:
-                            d_info['tags'].add(dt_name)
+            dev_count = 0
+            if site_ids:
+                dev_qs = Device.objects.filter(site_id__in=site_ids)
+                dev_count = dev_qs.count()
+                total_devices_all += dev_count
+
+                # If site tags are empty, inspect device tags
+                if not tags_by_val[val]:
+                    for dev in dev_qs.prefetch_related('tags')[:20]:
+                        for dt in dev.tags.all():
+                            dt_name = getattr(dt, 'name', str(dt)).strip()
+                            if dt_name:
+                                tags_by_val[val].add(dt_name)
 
             districts_data.append({
-                'name': dist_name,
-                'site_count': len(d_info['sites']),
-                'sites': d_info['sites'],
-                'device_count': device_count,
-                'tags': sorted(list(d_info['tags'])),
+                'name': lbl,
+                'choice_value': val,
+                'site_count': len(sites),
+                'sites': [s.name for s in sites],
+                'device_count': dev_count,
+                'tags': sorted(list(tags_by_val[val])),
             })
 
         return render(request, 'netbox_zabbix/bulk_push_tags.html', {
@@ -1555,7 +1621,7 @@ class ZabbixBulkPushTagsView(PermissionRequiredMixin, View):
     def post(self, request):
         """
         Push tags for all devices in a district to Zabbix.
-        Returns JSON progress/result.
+        Accepts choice_value (e.g. 'choice1') or district label (e.g. 'Taplejung').
         """
         if not request.user.has_perm('netbox_zabbix.change_zabbixhostgrouptemplate'):
             return JsonResponse({'success': False, 'error': 'Permission denied: Change permission required.'}, status=403)
@@ -1563,15 +1629,39 @@ class ZabbixBulkPushTagsView(PermissionRequiredMixin, View):
         from dcim.models import Site, Device
         from .signals import build_zabbix_tags, sync_site_tags_to_devices
 
-        district_name = request.POST.get('district')
-        if not district_name:
+        choices_list, val_to_lbl, lbl_to_val = self.get_district_choices()
+
+        district_val = request.POST.get('choice_value', '').strip()
+        district_lbl = request.POST.get('district', '').strip()
+
+        target_val = None
+        target_lbl = None
+
+        if district_val and district_val in val_to_lbl:
+            target_val = district_val
+            target_lbl = val_to_lbl[district_val]
+        elif district_lbl and district_lbl.lower() in lbl_to_val:
+            target_val = lbl_to_val[district_lbl.lower()]
+            target_lbl = val_to_lbl[target_val]
+        elif district_val:
+            target_val = district_val
+            target_lbl = val_to_lbl.get(district_val, district_val)
+        else:
             return JsonResponse({'success': False, 'error': 'No district specified'})
 
+        # Find matching sites
         all_sites = list(Site.objects.all().prefetch_related('tags'))
-        matching_sites = [s for s in all_sites if self.get_district(s).lower() == district_name.lower()]
+        matching_sites = []
+        for site in all_sites:
+            cf_data = getattr(site, 'custom_field_data', {}) or {}
+            raw_val = str(cf_data.get('district') or cf_data.get('District') or cf_data.get('DISTRICT') or '').strip()
+            if target_val and raw_val.lower() == target_val.lower():
+                matching_sites.append(site)
+            elif target_lbl and raw_val.lower() == target_lbl.lower():
+                matching_sites.append(site)
 
         if not matching_sites:
-            return JsonResponse({'success': False, 'error': f"No sites found for district '{district_name}'."})
+            return JsonResponse({'success': False, 'error': f"No sites found for district '{target_lbl}'."})
 
         # Step 1: Ensure site tags are synchronized to NetBox devices
         for site in matching_sites:
@@ -1583,7 +1673,7 @@ class ZabbixBulkPushTagsView(PermissionRequiredMixin, View):
         # Step 2: Fetch all devices in these sites
         devices = list(Device.objects.filter(site__in=matching_sites).select_related('site').prefetch_related('site__tags', 'tags'))
         if not devices:
-            return JsonResponse({'success': False, 'error': f"No devices found in district '{district_name}'."})
+            return JsonResponse({'success': False, 'error': f"No devices found in district '{target_lbl}'."})
 
         # Step 3: Fetch existing Zabbix hosts for these devices
         api = ZabbixAPI()
@@ -1650,7 +1740,8 @@ class ZabbixBulkPushTagsView(PermissionRequiredMixin, View):
 
         return JsonResponse({
             'success': True,
-            'district': district_name,
+            'district': target_lbl,
+            'choice_value': target_val,
             'total_devices': len(devices),
             'updated': len(updated_ok),
             'skipped': len(skipped),
