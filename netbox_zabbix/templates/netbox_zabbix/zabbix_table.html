@@ -177,6 +177,7 @@
                             <th>Status</th>
                             <th>Role / Host Groups</th>
                             <th>Attached Templates</th>
+                            <th>Tags</th>
                             <th>Zabbix Settings & SNMP</th>
                             <th class="text-end" style="width: 150px;">Match Status</th>
                         </tr>
@@ -209,6 +210,21 @@
                                         {% for tmpl in item.netbox_templates %}
                                             <span class="badge bg-success-subtle text-dark border border-success-subtle fw-normal d-inline-flex align-items-center gap-1 shadow-sm px-2 py-1" style="font-size: 0.8rem; border-radius: 4px;">
                                                 <i class="mdi mdi-file-document-outline text-success me-1"></i> {{ tmpl }}
+                                            </span>
+                                        {% endfor %}
+                                    </div>
+                                {% else %}
+                                    <span class="text-muted" style="font-size: 0.82rem;">&mdash; None &mdash;</span>
+                                {% endif %}
+                            </td>
+
+                            <!-- NETBOX TAGS -->
+                            <td class="align-middle py-2">
+                                {% if item.netbox_tags %}
+                                    <div class="d-flex flex-wrap gap-1 align-items-center">
+                                        {% for tag in item.netbox_tags %}
+                                            <span class="badge bg-success-subtle text-dark border border-success-subtle fw-normal d-inline-flex align-items-center gap-1 shadow-sm px-2 py-1" style="font-size: 0.8rem; border-radius: 4px;">
+                                                <i class="mdi mdi-tag-outline text-success me-1"></i>{{ tag }}
                                             </span>
                                         {% endfor %}
                                     </div>
@@ -383,6 +399,21 @@
                                         {% for tmpl in item.zabbix_templates %}
                                             <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm px-2 py-1" style="font-size: 0.8rem; border-radius: 4px;">
                                                 <i class="mdi mdi-file-document-outline text-primary me-1"></i> {{ tmpl }}
+                                            </span>
+                                        {% endfor %}
+                                    </div>
+                                {% else %}
+                                    <span class="text-muted" style="font-size: 0.82rem;">&mdash; None &mdash;</span>
+                                {% endif %}
+                            </td>
+
+                            <!-- ZABBIX TAGS -->
+                            <td class="align-middle py-2">
+                                {% if item.zabbix_exists and item.zabbix_tags %}
+                                    <div class="d-flex flex-wrap gap-1 align-items-center">
+                                        {% for tag in item.zabbix_tags %}
+                                            <span class="badge bg-light text-dark border fw-normal d-inline-flex align-items-center gap-1 shadow-sm px-2 py-1" style="font-size: 0.8rem; border-radius: 4px;">
+                                                <i class="mdi mdi-tag-outline text-primary me-1"></i>{{ tag }}
                                             </span>
                                         {% endfor %}
                                     </div>

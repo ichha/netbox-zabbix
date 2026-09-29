@@ -1,7 +1,7 @@
 import logging
-from django.db.models.signals import pre_save, post_save, post_delete
+from django.db.models.signals import pre_save, post_save, post_delete, m2m_changed
 from django.dispatch import receiver
-from dcim.models import Device, DeviceRole
+from dcim.models import Device, DeviceRole, Site
 from .zabbix_api import ZabbixAPI
 from .template_storage import get_role_zabbix_settings
 
@@ -9,12 +9,23 @@ logger = logging.getLogger('netbox.plugins.netbox_zabbix')
 
 import threading
 _sync_state = threading.local()
+_tag_sync_state = threading.local()
 
 def is_sync_paused():
     return getattr(_sync_state, 'paused', False)
 
 def set_sync_paused(value: bool):
     _sync_state.paused = value
+
+def is_tag_syncing():
+    return getattr(_tag_sync_state, 'active', False)
+
+class TagSyncContext:
+    def __enter__(self):
+        _tag_sync_state.active = True
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        _tag_sync_state.active = False
 
 
 def build_snmp_details(cf_data):
@@ -134,15 +145,152 @@ def apply_monitoring_mode(params, proxy_id_str):
         params.pop("proxy_groupid", None)
 
 
+def sync_device_tags_from_site(device):
+    """
+    Synchronizes NetBox tags from device's site to the device itself.
+    If site has 'KEY:VALUE' tag (e.g. 'IMU:Jumla'), replaces any existing 'KEY:...' tag on device.
+    Adds all site tags to the device if not already present.
+    """
+    if not device or not hasattr(device, 'site') or not device.site:
+        return
+    site = device.site
+    if not hasattr(site, 'tags') or not hasattr(device, 'tags'):
+        return
+
+    site_tags = list(site.tags.all())
+    if not site_tags:
+        return
+
+    cur_dev_tags = list(device.tags.all())
+    cur_dev_tag_names = {getattr(t, 'name', str(t)) for t in cur_dev_tags}
+
+    tags_to_add = []
+    tags_to_remove = []
+
+    for st in site_tags:
+        st_name = getattr(st, 'name', str(st)).strip()
+        if not st_name:
+            continue
+
+        if ':' in st_name:
+            st_key, _ = st_name.split(':', 1)
+            st_key_clean = st_key.strip().lower()
+            # If device has existing tag with same key but different value, remove it
+            for dt in cur_dev_tags:
+                dt_name = getattr(dt, 'name', str(dt)).strip()
+                if ':' in dt_name:
+                    dt_key, _ = dt_name.split(':', 1)
+                    if dt_key.strip().lower() == st_key_clean and dt_name != st_name:
+                        if dt not in tags_to_remove:
+                            tags_to_remove.append(dt)
+
+        if st_name not in cur_dev_tag_names:
+            tags_to_add.append(st)
+
+    if tags_to_remove or tags_to_add:
+        with TagSyncContext():
+            if tags_to_remove:
+                device.tags.remove(*tags_to_remove)
+            if tags_to_add:
+                device.tags.add(*tags_to_add)
+        logger.info(f"[Zabbix Signal] Synced site tags from '{site.name}' to device '{device.name}' (Added: {[getattr(t, 'name', str(t)) for t in tags_to_add]}, Removed: {[getattr(t, 'name', str(t)) for t in tags_to_remove]}).")
+
+
+def sync_site_tags_to_devices(site, old_tags=None):
+    """
+    Called when Site tags are changed/saved.
+    Retrieves all devices in the site and updates their tags in NetBox.
+    If Auto-Sync is enabled, pushes each device to Zabbix.
+    """
+    if not site or not hasattr(site, 'tags'):
+        return
+
+    from dcim.models import Device
+    devices = list(Device.objects.filter(site=site))
+    if not devices:
+        return
+
+    site_tags = list(site.tags.all())
+    old_tag_names = {getattr(t, 'name', str(t)).strip() for t in (old_tags or [])}
+    cur_tag_names = {getattr(t, 'name', str(t)).strip() for t in site_tags}
+    removed_site_tag_names = old_tag_names - cur_tag_names
+
+    logger.info(f"[Zabbix Signal] Site '{site.name}' tags changed. Syncing {len(devices)} devices in site...")
+
+    updated_count = 0
+    with TagSyncContext():
+        for device in devices:
+            if not hasattr(device, 'tags'):
+                continue
+            cur_dev_tags = list(device.tags.all())
+            cur_dev_tag_names = {getattr(t, 'name', str(t)) for t in cur_dev_tags}
+
+            tags_to_remove = []
+            tags_to_add = []
+
+            # 1. Remove tags that were removed from the site
+            for dt in cur_dev_tags:
+                dt_name = getattr(dt, 'name', str(dt)).strip()
+                if dt_name in removed_site_tag_names:
+                    tags_to_remove.append(dt)
+
+            # 2. Check for key:value prefix overrides (e.g. IMU:Jumla replacing IMU:Attariya)
+            for st in site_tags:
+                st_name = getattr(st, 'name', str(st)).strip()
+                if not st_name:
+                    continue
+                if ':' in st_name:
+                    st_key, _ = st_name.split(':', 1)
+                    st_key_clean = st_key.strip().lower()
+                    for dt in cur_dev_tags:
+                        dt_name = getattr(dt, 'name', str(dt)).strip()
+                        if ':' in dt_name:
+                            dt_key, _ = dt_name.split(':', 1)
+                            if dt_key.strip().lower() == st_key_clean and dt_name != st_name:
+                                if dt not in tags_to_remove:
+                                    tags_to_remove.append(dt)
+
+                if st_name not in cur_dev_tag_names:
+                    tags_to_add.append(st)
+
+            if tags_to_remove or tags_to_add:
+                if tags_to_remove:
+                    device.tags.remove(*tags_to_remove)
+                if tags_to_add:
+                    device.tags.add(*tags_to_add)
+                updated_count += 1
+
+    logger.info(f"[Zabbix Signal] Updated NetBox tags for {updated_count}/{len(devices)} devices in site '{site.name}'.")
+
+    # If Auto-Sync is enabled, push each device to Zabbix!
+    if is_sync_paused():
+        logger.info(f"[Zabbix Signal] Auto-sync is paused. Skipping Zabbix push for site '{site.name}' devices.")
+        return
+
+    try:
+        from .models import ZabbixSyncState
+        if not ZabbixSyncState.is_enabled():
+            logger.info(f"[Zabbix Signal] Auto-sync is disabled. Skipping Zabbix push for site '{site.name}' devices (use Bulk Push).")
+            return
+    except Exception:
+        pass
+
+    # Push to Zabbix
+    for dev in devices:
+        push_device_to_zabbix(dev, reason=f"Site '{site.name}' tags updated")
+
+
 def build_zabbix_tags(device):
     """
     Extract tags from device's site and device itself for Zabbix host tags.
     If tag name is in format 'Key:Value' (e.g. 'IMU:Attariya'),
     maps to {'tag': 'IMU', 'value': 'Attariya'}.
     If tag name has no colon, maps to {'tag': tag_name, 'value': ''}.
+    Authoritative order: site tags first, then device tags.
+    Deduplicates by tag key so conflicting values for the same key are avoided.
     """
     tags_payload = []
-    seen = set()
+    seen_keys = set()
 
     tags_sources = []
     site = getattr(device, 'site', None)
@@ -167,10 +315,11 @@ def build_zabbix_tags(device):
         if not t_key:
             continue
 
-        key_tuple = (t_key, t_val)
-        if key_tuple not in seen:
-            seen.add(key_tuple)
-            tags_payload.append({"tag": t_key, "value": t_val})
+        k_lower = t_key.lower()
+        if k_lower in seen_keys:
+            continue
+        seen_keys.add(k_lower)
+        tags_payload.append({"tag": t_key, "value": t_val})
 
     return tags_payload
 
@@ -219,6 +368,12 @@ def push_device_to_zabbix(device, reason=""):
     device_name = device.name
     if not device_name:
         return False, "Device has no name."
+
+    # Ensure device tags in NetBox are synchronized with site tags
+    try:
+        sync_device_tags_from_site(device)
+    except Exception as e:
+        logger.debug(f"[Zabbix Signal] Error syncing site tags to device: {e}")
 
     # Guard 1: Primary IP required
     nb_ip = None
@@ -449,6 +604,10 @@ def sync_device_to_zabbix_on_save(sender, instance, created, raw=False, **kwargs
         logger.info(f"[Zabbix Signal] Skipping '{instance.name}' — auto-sync is paused.")
         return
     try:
+        sync_device_tags_from_site(instance)
+    except Exception as e:
+        logger.debug(f"[Zabbix Signal] Error syncing site tags to device: {e}")
+    try:
         from .models import ZabbixSyncState
         if not ZabbixSyncState.is_enabled():
             logger.info(f"[Zabbix Signal] Auto-sync disabled. Skipping '{instance.name}'.")
@@ -490,3 +649,68 @@ def connect_zabbix_settings_signal():
     User configures parameters in Host Groups and syncs manually from Bulk Push page.
     """
     logger.info("[Zabbix Signal] Host Group settings auto-sync disabled. Parameters must be synced from Bulk Push page.")
+
+
+# ==========================================
+# SITE & TAG SIGNALS
+# Auto-propagate Site tag changes to Devices
+# Auto-push Device to Zabbix on tag change
+# ==========================================
+
+@receiver(pre_save, sender=Site)
+def site_pre_save(sender, instance, **kwargs):
+    if instance.pk:
+        try:
+            old_inst = Site.objects.get(pk=instance.pk)
+            instance._old_tags = list(old_inst.tags.all())
+        except Exception:
+            instance._old_tags = []
+
+
+@receiver(post_save, sender=Site)
+def site_post_save(sender, instance, created, raw=False, **kwargs):
+    if raw or is_tag_syncing():
+        return
+    old_tags = getattr(instance, '_old_tags', None)
+    sync_site_tags_to_devices(instance, old_tags=old_tags)
+
+
+try:
+    from extras.models import TaggedItem
+
+    @receiver(post_save, sender=TaggedItem)
+    def tagged_item_post_save(sender, instance, created, **kwargs):
+        if is_tag_syncing():
+            return
+        try:
+            obj = instance.content_object
+            if isinstance(obj, Site):
+                sync_site_tags_to_devices(obj)
+            elif isinstance(obj, Device):
+                # Ensure device gets site tags if missing
+                sync_device_tags_from_site(obj)
+                if not is_sync_paused():
+                    from .models import ZabbixSyncState
+                    if ZabbixSyncState.is_enabled():
+                        push_device_to_zabbix(obj, reason="Device tag added")
+        except Exception as e:
+            logger.debug(f"[Zabbix Signal] TaggedItem post_save error: {e}")
+
+    @receiver(post_delete, sender=TaggedItem)
+    def tagged_item_post_delete(sender, instance, **kwargs):
+        if is_tag_syncing():
+            return
+        try:
+            obj = instance.content_object
+            if isinstance(obj, Site):
+                sync_site_tags_to_devices(obj)
+            elif isinstance(obj, Device):
+                if not is_sync_paused():
+                    from .models import ZabbixSyncState
+                    if ZabbixSyncState.is_enabled():
+                        push_device_to_zabbix(obj, reason="Device tag removed")
+        except Exception as e:
+            logger.debug(f"[Zabbix Signal] TaggedItem post_delete error: {e}")
+except Exception as e:
+    logger.warning(f"[Zabbix Signal] Could not connect TaggedItem signals: {e}")
+

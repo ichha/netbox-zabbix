@@ -649,6 +649,7 @@ class ZabbixHostsView(PermissionRequiredMixin, View):
             res = api.call('host.get', {
                 'selectInterfaces': ['interfaceid', 'type', 'main', 'ip', 'port'],
                 'selectHostGroups': ['groupid', 'name'],
+                'selectTags': ['tag', 'value', 'automatic'],
                 'output': ['hostid', 'host', 'name', 'status']
             })
             if isinstance(res, list):
@@ -692,9 +693,32 @@ class ZabbixHostsView(PermissionRequiredMixin, View):
                 groups = zh.get("hostgroups", []) or zh.get("groups", [])
                 zh["group_names_lower"] = [g.get("name", "").strip().lower() for g in groups if isinstance(g, dict) and g.get("name")]
 
+                zh_tags = zh.get("tags", [])
+                zh["tags_clean"] = [t for t in zh_tags if isinstance(t, dict) and str(t.get("automatic", "0")) != "1"]
+
         # Classify ALL devices in queryset for global Top Cards and Filtering
-        all_nb_values = list(qs.values('id', 'name', 'status', 'role__name', 'primary_ip4__address', 'primary_ip6__address'))
+        all_nb_values = list(qs.values('id', 'name', 'status', 'role__name', 'primary_ip4__address', 'primary_ip6__address', 'site_id'))
         
+        # Fast batch fetch for device tags and site tags
+        dev_ids = [d['id'] for d in all_nb_values]
+        site_ids = list({d['site_id'] for d in all_nb_values if d.get('site_id')})
+        site_tags_map = {}
+        dev_tags_map = {}
+        try:
+            from extras.models import TaggedItem
+            from django.contrib.contenttypes.models import ContentType
+            from dcim.models import Site
+            dev_ct = ContentType.objects.get_for_model(Device)
+            site_ct = ContentType.objects.get_for_model(Site)
+            if site_ids:
+                for ti in TaggedItem.objects.filter(content_type=site_ct, object_id__in=site_ids).select_related('tag'):
+                    site_tags_map.setdefault(ti.object_id, []).append(ti.tag.name)
+            if dev_ids:
+                for ti in TaggedItem.objects.filter(content_type=dev_ct, object_id__in=dev_ids).select_related('tag'):
+                    dev_tags_map.setdefault(ti.object_id, []).append(ti.tag.name)
+        except Exception as e:
+            logger.debug(f"Tag batch fetch error: {e}")
+
         global_matched_ids = set()
         global_value_mismatch_ids = set()
         global_not_in_zabbix_ids = set()
@@ -740,6 +764,32 @@ class ZabbixHostsView(PermissionRequiredMixin, View):
             # Check 4: Host Group
             if not is_mismatch and d_role:
                 if d_role.lower() not in zh.get('group_names_lower', []):
+                    is_mismatch = True
+
+            # Check 5: Tags Check
+            if not is_mismatch:
+                expected_tag_strings = site_tags_map.get(d.get('site_id'), []) + dev_tags_map.get(d['id'], [])
+                expected_tag_tuples = set()
+                seen_k = set()
+                for t_str in expected_tag_strings:
+                    t_str = t_str.strip()
+                    if not t_str:
+                        continue
+                    if ':' in t_str:
+                        k, v = t_str.split(':', 1)
+                        k, v = k.strip().lower(), v.strip().lower()
+                    else:
+                        k, v = t_str.lower(), ""
+                    if k not in seen_k:
+                        seen_k.add(k)
+                        expected_tag_tuples.add((k, v))
+
+                z_tag_tuples = set(
+                    (t.get('tag', '').strip().lower(), t.get('value', '').strip().lower())
+                    for t in zh.get('tags_clean', [])
+                    if t.get('tag')
+                )
+                if expected_tag_tuples != z_tag_tuples:
                     is_mismatch = True
 
             if is_mismatch:
@@ -797,6 +847,7 @@ class ZabbixHostsView(PermissionRequiredMixin, View):
                     'selectParentTemplates': ['templateid', 'name'],
                     'selectHostGroups': ['groupid', 'name'],
                     'selectMacros': ['macro', 'value'],
+                    'selectTags': ['tag', 'value', 'automatic'],
                     'output': ['hostid', 'host', 'name', 'status', 'proxy_hostid', 'proxy_groupid', 'monitored_by']
                 })
                 if isinstance(res_details, list):
@@ -827,6 +878,8 @@ class ZabbixHostsView(PermissionRequiredMixin, View):
         # 7. Build Page Blocks for rendering
         page_blocks = []
 
+        from .signals import build_zabbix_tags
+
         for dev in page_devices:
             nb_name = dev.name or f"Device-{dev.pk}"
             nb_ip = "—"
@@ -840,6 +893,9 @@ class ZabbixHostsView(PermissionRequiredMixin, View):
 
             nb_name_lower = nb_name.strip().lower()
             matching_zabbix_host = page_zabbix_details.get(nb_name_lower) or zabbix_by_name.get(nb_name_lower) or zabbix_by_vis.get(nb_name_lower) or zabbix_ip_map.get(nb_ip)
+
+            nb_tags_raw = build_zabbix_tags(dev)
+            nb_tags_disp = [f"{t['tag']}:{t['value']}" if t['value'] else t['tag'] for t in nb_tags_raw]
 
             item = {
                 "netbox_name": nb_name,
@@ -859,6 +915,8 @@ class ZabbixHostsView(PermissionRequiredMixin, View):
                 "zabbix_hostgroups": [],
                 "zabbix_templates": [],
                 "netbox_templates": [],
+                "netbox_tags": nb_tags_disp,
+                "zabbix_tags": [],
                 "zabbix_protocol": "—",
                 "zabbix_monitored_by": "—",
                 "snmp_version": "—",
@@ -944,6 +1002,19 @@ class ZabbixHostsView(PermissionRequiredMixin, View):
                     if not any(nb_role.lower() == zg.lower() for zg in item["zabbix_hostgroups"]):
                         mismatch_reasons.append(f"Host Group Mismatch (Missing group: {nb_role})")
 
+                # COMPARISON 5: Tags Check
+                z_tags_raw = [t for t in zh_target.get('tags', []) if isinstance(t, dict) and str(t.get('automatic', '0')) != '1']
+                z_tags_disp = [f"{t.get('tag', '')}:{t.get('value', '')}" if t.get('value') else t.get('tag', '') for t in z_tags_raw if t.get('tag')]
+                item["zabbix_tags"] = z_tags_disp
+
+                nb_tag_tuples = set((t['tag'].strip().lower(), t['value'].strip().lower()) for t in nb_tags_raw)
+                z_tag_tuples = set((t.get('tag', '').strip().lower(), t.get('value', '').strip().lower()) for t in z_tags_raw if t.get('tag'))
+
+                if nb_tag_tuples != z_tag_tuples:
+                    nb_str = ', '.join(nb_tags_disp) or 'None'
+                    z_str = ', '.join(z_tags_disp) or 'None'
+                    mismatch_reasons.append(f"Tags Mismatch (NetBox: [{nb_str}] vs Zabbix: [{z_str}])")
+
                 # Templates for display
                 all_t_objs = []
                 for k in ["parentTemplates", "templates", "inheritedTemplates"]:
@@ -996,6 +1067,7 @@ class ZabbixHostsView(PermissionRequiredMixin, View):
             "Status",
             "Role / Host Groups",
             "Attached Templates",
+            "Tags",
             "Zabbix Settings & SNMP",
             "Match Status & Action"
         ]
@@ -1161,7 +1233,7 @@ class ZabbixBulkPushView(PermissionRequiredMixin, View):
         from dcim.models import Device
         from .signals import push_device_to_zabbix
         from .template_storage import get_role_zabbix_settings
-        from .signals import build_snmp_details, get_or_create_hostgroup_id, execute_zabbix_host_save, build_zabbix_tags
+        from .signals import build_snmp_details, get_or_create_hostgroup_id, execute_zabbix_host_save, build_zabbix_tags, sync_device_tags_from_site
         
         action = request.POST.get('action', 'push')
         
@@ -1264,6 +1336,12 @@ class ZabbixBulkPushView(PermissionRequiredMixin, View):
             if not device_name:
                 skipped.append({'name': '(unnamed)', 'reason': 'No name'})
                 continue
+
+            # Ensure device tags in NetBox are synchronized with site tags
+            try:
+                sync_device_tags_from_site(device)
+            except Exception:
+                pass
             
             # Get IP
             nb_ip = None

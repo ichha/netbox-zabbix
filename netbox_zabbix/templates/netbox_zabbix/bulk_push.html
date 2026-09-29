@@ -29,7 +29,7 @@
   <div class="alert alert-info alert-dismissible fade show mb-3" role="alert" style="font-size:0.88rem;">
     <i class="mdi mdi-information-outline me-1"></i>
     <strong>Bulk Push</strong> is <strong>100× faster</strong> than single-device sync. It fetches all existing Zabbix hosts in one API call, then batches creates up to 100 hosts per call.
-    <strong class="ms-2">Auto-Sync OFF</strong> is recommended during large CSV imports to avoid per-device API calls.
+    <strong class="ms-2">Auto-Sync OFF</strong> is recommended during large CSV imports. Tags from NetBox Sites (e.g. <code>IMU:Location</code>) are automatically updated on devices and pushed to Zabbix host tags during Bulk Push.
     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
   </div>
 
