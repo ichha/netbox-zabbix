@@ -15,6 +15,7 @@ menu = PluginMenu(
             PluginMenuItem(link='plugins:netbox_zabbix:hostgroups', link_text='Hostgroups', permissions=['netbox_zabbix.view_zabbixhostgrouptemplate']),
             PluginMenuItem(link='plugins:netbox_zabbix:hosts', link_text='Hosts', permissions=['netbox_zabbix.view_zabbixhostgrouptemplate']),
             PluginMenuItem(link='plugins:netbox_zabbix:bulk_push', link_text='Bulk Push', permissions=['netbox_zabbix.view_zabbixhostgrouptemplate']),
+            PluginMenuItem(link='plugins:netbox_zabbix:bulk_push_tags', link_text='Bulk Push Tags', permissions=['netbox_zabbix.view_zabbixhostgrouptemplate']),
         )),
     )
 )

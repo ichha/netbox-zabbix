@@ -1,0 +1,222 @@
+{% extends 'base/layout.html' %}
+{% block title %}Bulk Push Tags by District{% endblock %}
+{% block content %}
+<div class="container-fluid px-3">
+
+  <!-- Header -->
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h4 class="fw-bold mb-0"><i class="mdi mdi-tag-multiple me-2 text-primary"></i>Bulk Push Tags by District</h4>
+      <p class="text-muted small mb-0">Push NetBox Site & Device tags (e.g. <code>IMU:Location</code>) directly to Zabbix host tags grouped by District.</p>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <a href="{% url 'plugins:netbox_zabbix:hosts' %}" class="btn btn-sm btn-outline-secondary">
+        <i class="mdi mdi-server me-1"></i>View Hosts
+      </a>
+      <a href="{% url 'plugins:netbox_zabbix:bulk_push' %}" class="btn btn-sm btn-outline-primary">
+        <i class="mdi mdi-cloud-upload me-1"></i>Bulk Push (Roles)
+      </a>
+    </div>
+  </div>
+
+  <!-- Summary Cards -->
+  <div class="row g-2 mb-3">
+    <div class="col-12 col-md-4">
+      <div class="card border-0 shadow-sm bg-primary-subtle p-3 text-center">
+        <div class="fs-4 fw-bold text-primary">{{ total_districts }}</div>
+        <div class="text-muted small">Total Districts</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="card border-0 shadow-sm bg-info-subtle p-3 text-center">
+        <div class="fs-4 fw-bold text-info-emphasis">{{ total_sites }}</div>
+        <div class="text-muted small">Total Sites</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="card border-0 shadow-sm bg-success-subtle p-3 text-center">
+        <div class="fs-4 fw-bold text-success">{{ total_devices }}</div>
+        <div class="text-muted small">Total Devices</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Info Banner -->
+  <div class="alert alert-info alert-dismissible fade show mb-3" role="alert" style="font-size:0.88rem;">
+    <i class="mdi mdi-information-outline me-1"></i>
+    <strong>District Tag Push:</strong> Clicking <strong>Push Tags</strong> updates all devices in NetBox for that District with their Site tags (e.g., <code>IMU:Jumla</code>), and pushes the tags directly to the corresponding Zabbix hosts via <code>host.update</code>. Interfaces, templates, and monitoring parameters are strictly preserved.
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>
+
+  <!-- Districts Table -->
+  <div class="card shadow-sm border-0">
+    <div class="card-header bg-primary text-white py-2 d-flex align-items-center justify-content-between">
+      <span class="fw-bold"><i class="mdi mdi-map-marker-multiple me-1"></i>Districts ({{ districts_data|length }})</span>
+      <div class="input-group input-group-sm" style="max-width: 250px;">
+        <span class="input-group-text bg-white border-0"><i class="mdi mdi-magnify"></i></span>
+        <input type="text" id="districtSearch" class="form-control border-0" placeholder="Filter districts..." onkeyup="filterDistricts()">
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0" id="districtsTable">
+        <thead class="table-light text-muted text-uppercase" style="font-size: 0.8rem;">
+          <tr>
+            <th>District Name</th>
+            <th>Sites</th>
+            <th>Total Devices</th>
+            <th>Tags to Push</th>
+            <th class="text-end">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in districts_data %}
+          <tr id="row-{{ forloop.counter }}">
+            <td class="fw-bold text-dark">
+              <i class="mdi mdi-map-marker text-danger me-1"></i>{{ d.name }}
+            </td>
+            <td>
+              <span class="badge bg-secondary-subtle text-dark border me-1">{{ d.site_count }} site{% if d.site_count != 1 %}s{% endif %}</span>
+              <span class="text-muted small" title="{{ d.sites|join:', ' }}">
+                {{ d.sites|slice:":3"|join:", " }}{% if d.sites|length > 3 %}...{% endif %}
+              </span>
+            </td>
+            <td>
+              <span class="badge bg-success-subtle text-dark border fw-bold px-2 py-1" style="font-size: 0.8rem;">
+                {{ d.device_count }} device{% if d.device_count != 1 %}s{% endif %}
+              </span>
+            </td>
+            <td>
+              {% if d.tags %}
+                <div class="d-flex flex-wrap gap-1">
+                  {% for t in d.tags %}
+                    <span class="badge bg-light text-dark border fw-normal px-2 py-1" style="font-size: 0.78rem;">
+                      <i class="mdi mdi-tag-outline text-primary me-1"></i>{{ t }}
+                    </span>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <span class="text-muted small">&mdash; No Tags &mdash;</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-primary fw-bold px-3" onclick="pushDistrictTags('{{ d.name|escapejs }}', this)" id="btn-{{ forloop.counter }}" {% if d.device_count == 0 %}disabled title="No devices in this district"{% endif %}>
+                <i class="mdi mdi-tag-plus me-1"></i>Push Tags
+              </button>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="5" class="text-center text-muted py-4">No districts found across NetBox sites.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- Result Modal -->
+<div class="modal fade" id="tagResultModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title"><i class="mdi mdi-tag-check me-2"></i>District Tag Push Result</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="tagResultBody">Loading...</div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '{{ csrf_token }}';
+
+function filterDistricts() {
+  const query = document.getElementById('districtSearch').value.toLowerCase();
+  const rows = document.querySelectorAll('#districtsTable tbody tr');
+  rows.forEach(r => {
+    const text = r.innerText.toLowerCase();
+    r.style.display = text.includes(query) ? '' : 'none';
+  });
+}
+
+function pushDistrictTags(districtName, btn) {
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Pushing...';
+
+  const formData = new FormData();
+  formData.append('district', districtName);
+  formData.append('csrfmiddlewaretoken', CSRF);
+
+  fetch('{% url "plugins:netbox_zabbix:bulk_push_tags" %}', {
+    method: 'POST',
+    body: formData,
+    headers: {'X-Requested-With': 'XMLHttpRequest'}
+  })
+  .then(r => r.json())
+  .then(data => {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    showTagResult(data);
+  })
+  .catch(err => {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    showTagResult({success: false, error: String(err)});
+  });
+}
+
+function showTagResult(data) {
+  const body = document.getElementById('tagResultBody');
+  if (!data.success) {
+    body.innerHTML = `<div class="alert alert-danger"><i class="mdi mdi-alert-circle me-1"></i>${data.error || 'Unknown error'}</div>`;
+  } else {
+    body.innerHTML = `
+      <div class="row g-2 mb-3">
+        <div class="col-4">
+          <div class="card border-0 bg-secondary-subtle text-center p-2">
+            <div class="fs-3 fw-bold">${data.total_devices}</div>
+            <div class="text-muted small">Total Devices</div>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="card border-0 bg-success-subtle text-center p-2">
+            <div class="fs-3 fw-bold text-success">${data.updated}</div>
+            <div class="text-muted small">Tags Updated in Zabbix</div>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="card border-0 bg-warning-subtle text-center p-2">
+            <div class="fs-3 fw-bold text-warning">${data.skipped}</div>
+            <div class="text-muted small">Skipped / Not in Zabbix</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <strong class="small text-muted d-block mb-1">Tags Applied:</strong>
+        ${data.tags_applied && data.tags_applied.length > 0 ? 
+          data.tags_applied.map(t => `<span class="badge bg-primary text-white me-1 px-2 py-1"><i class="mdi mdi-tag me-1"></i>${t}</span>`).join('') 
+          : '<span class="text-muted small">None</span>'}
+      </div>
+
+      ${data.failed > 0 ? `<div class="alert alert-danger small"><i class="mdi mdi-alert me-1"></i><strong>${data.failed} failed:</strong> ${data.failed_details.map(f => f.name + ': ' + f.reason).join(', ')}</div>` : ''}
+      ${data.skipped > 0 ? `<div class="alert alert-warning small"><i class="mdi mdi-information-outline me-1"></i><strong>Not in Zabbix:</strong> ${data.skipped_details.map(s => s.name).join(', ')}</div>` : ''}
+
+      <div class="alert alert-success d-flex align-items-center mb-0">
+        <i class="mdi mdi-check-circle-outline fs-4 me-2"></i>
+        <div>
+          Successfully updated tags for <strong>${data.updated}</strong> hosts in District <strong>${data.district}</strong>.
+        </div>
+      </div>
+    `;
+  }
+  new bootstrap.Modal(document.getElementById('tagResultModal')).show();
+}
+</script>
+{% endblock %}

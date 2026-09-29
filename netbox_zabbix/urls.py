@@ -19,4 +19,5 @@ urlpatterns = [
     path('sync-role/', views.ZabbixSyncRoleView.as_view(), name='sync_role'),
     path('push-device/', views.ZabbixPushDeviceView.as_view(), name='push_device'),
     path('bulk-push/', views.ZabbixBulkPushView.as_view(), name='bulk_push'),
+    path('bulk-push-tags/', views.ZabbixBulkPushTagsView.as_view(), name='bulk_push_tags'),
 ]

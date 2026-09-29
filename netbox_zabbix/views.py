@@ -1470,3 +1470,193 @@ class ZabbixBulkPushView(PermissionRequiredMixin, View):
             'created_names': created_ok[:20],
             'updated_names': updated_ok[:20],
         })
+
+
+class ZabbixBulkPushTagsView(PermissionRequiredMixin, View):
+    """
+    Bulk push tags to Zabbix hosts based on NetBox District.
+    """
+    permission_required = 'netbox_zabbix.view_zabbixhostgrouptemplate'
+
+    @staticmethod
+    def get_district(site):
+        if not site:
+            return "Unassigned"
+        cf_data = getattr(site, 'custom_field_data', {}) or {}
+        for k in ['district', 'District', 'DISTRICT']:
+            v = cf_data.get(k)
+            if v:
+                if isinstance(v, dict):
+                    return str(v.get('label') or v.get('value') or v.get('name') or '').strip()
+                return str(v).strip()
+        if hasattr(site, 'district') and getattr(site, 'district'):
+            d = getattr(site, 'district')
+            return str(getattr(d, 'name', d)).strip()
+        if getattr(site, 'region', None):
+            return str(site.region.name).strip()
+        return "Unassigned"
+
+    def get(self, request):
+        """Show districts with site counts, device counts, and associated tags."""
+        from dcim.models import Site, Device
+        
+        all_sites = list(Site.objects.all().prefetch_related('tags'))
+        
+        districts_map = {}
+        for site in all_sites:
+            dist = self.get_district(site) or "Unassigned"
+            if dist not in districts_map:
+                districts_map[dist] = {
+                    'name': dist,
+                    'sites': [],
+                    'site_ids': [],
+                    'tags': set(),
+                }
+            districts_map[dist]['sites'].append(site.name)
+            districts_map[dist]['site_ids'].append(site.pk)
+            for t in site.tags.all():
+                t_name = getattr(t, 'name', str(t)).strip()
+                if t_name:
+                    districts_map[dist]['tags'].add(t_name)
+
+        districts_data = []
+        total_devices_all = 0
+        total_sites_all = len(all_sites)
+
+        for dist_name, d_info in sorted(districts_map.items(), key=lambda x: x[0]):
+            site_ids = d_info['site_ids']
+            dev_qs = Device.objects.filter(site_id__in=site_ids)
+            device_count = dev_qs.count()
+            total_devices_all += device_count
+
+            if not d_info['tags']:
+                for d in dev_qs.prefetch_related('tags')[:20]:
+                    for dt in d.tags.all():
+                        dt_name = getattr(dt, 'name', str(dt)).strip()
+                        if dt_name:
+                            d_info['tags'].add(dt_name)
+
+            districts_data.append({
+                'name': dist_name,
+                'site_count': len(d_info['sites']),
+                'sites': d_info['sites'],
+                'device_count': device_count,
+                'tags': sorted(list(d_info['tags'])),
+            })
+
+        return render(request, 'netbox_zabbix/bulk_push_tags.html', {
+            'districts_data': districts_data,
+            'total_districts': len(districts_data),
+            'total_sites': total_sites_all,
+            'total_devices': total_devices_all,
+            'title': 'Bulk Push Tags by District',
+        })
+
+    def post(self, request):
+        """
+        Push tags for all devices in a district to Zabbix.
+        Returns JSON progress/result.
+        """
+        if not request.user.has_perm('netbox_zabbix.change_zabbixhostgrouptemplate'):
+            return JsonResponse({'success': False, 'error': 'Permission denied: Change permission required.'}, status=403)
+
+        from dcim.models import Site, Device
+        from .signals import build_zabbix_tags, sync_site_tags_to_devices
+
+        district_name = request.POST.get('district')
+        if not district_name:
+            return JsonResponse({'success': False, 'error': 'No district specified'})
+
+        all_sites = list(Site.objects.all().prefetch_related('tags'))
+        matching_sites = [s for s in all_sites if self.get_district(s).lower() == district_name.lower()]
+
+        if not matching_sites:
+            return JsonResponse({'success': False, 'error': f"No sites found for district '{district_name}'."})
+
+        # Step 1: Ensure site tags are synchronized to NetBox devices
+        for site in matching_sites:
+            try:
+                sync_site_tags_to_devices(site)
+            except Exception as e:
+                logger.debug(f"Error syncing site tags: {e}")
+
+        # Step 2: Fetch all devices in these sites
+        devices = list(Device.objects.filter(site__in=matching_sites).select_related('site').prefetch_related('site__tags', 'tags'))
+        if not devices:
+            return JsonResponse({'success': False, 'error': f"No devices found in district '{district_name}'."})
+
+        # Step 3: Fetch existing Zabbix hosts for these devices
+        api = ZabbixAPI()
+        device_names = [d.name for d in devices if d.name]
+        existing_map = {}
+        CHUNK = 500
+        for i in range(0, len(device_names), CHUNK):
+            chunk = device_names[i:i+CHUNK]
+            res = api.call('host.get', {
+                'filter': {'host': chunk},
+                'output': ['hostid', 'host', 'name']
+            })
+            if isinstance(res, list):
+                for h in res:
+                    existing_map[h.get('host', '').lower()] = h.get('hostid')
+                    if h.get('name'):
+                        existing_map[h.get('name', '').lower()] = h.get('hostid')
+
+        missing_names = [d.name for d in devices if d.name and d.name.lower() not in existing_map]
+        if missing_names:
+            for i in range(0, len(missing_names), CHUNK):
+                chunk = missing_names[i:i+CHUNK]
+                res = api.call('host.get', {
+                    'filter': {'name': chunk},
+                    'output': ['hostid', 'host', 'name']
+                })
+                if isinstance(res, list):
+                    for h in res:
+                        existing_map[h.get('host', '').lower()] = h.get('hostid')
+                        if h.get('name'):
+                            existing_map[h.get('name', '').lower()] = h.get('hostid')
+
+        # Step 4: Update tags in Zabbix for each host
+        updated_ok = []
+        updated_fail = []
+        skipped = []
+        applied_tags_set = set()
+
+        for device in devices:
+            d_name = device.name
+            if not d_name:
+                continue
+
+            hid = existing_map.get(d_name.lower())
+            if not hid:
+                skipped.append({'name': d_name, 'reason': 'Host not in Zabbix'})
+                continue
+
+            tags_payload = build_zabbix_tags(device)
+            for t in tags_payload:
+                t_str = f"{t['tag']}:{t['value']}" if t.get('value') else t.get('tag', '')
+                if t_str:
+                    applied_tags_set.add(t_str)
+
+            res = api.call('host.update', {
+                'hostid': hid,
+                'tags': tags_payload
+            })
+
+            if isinstance(res, dict) and 'error' in res:
+                updated_fail.append({'name': d_name, 'reason': str(res['error'])})
+            else:
+                updated_ok.append(d_name)
+
+        return JsonResponse({
+            'success': True,
+            'district': district_name,
+            'total_devices': len(devices),
+            'updated': len(updated_ok),
+            'skipped': len(skipped),
+            'failed': len(updated_fail),
+            'tags_applied': sorted(list(applied_tags_set)),
+            'updated_names': updated_ok[:20],
+            'skipped_details': skipped[:20],
+            'failed_details': updated_fail[:20],
+        })
