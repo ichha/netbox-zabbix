@@ -167,6 +167,8 @@ def sync_device_tags_from_site(device):
     tags_to_add = []
     tags_to_remove = []
 
+    site_tag_names = {getattr(t, 'name', str(t)).strip() for t in site_tags}
+
     for st in site_tags:
         st_name = getattr(st, 'name', str(st)).strip()
         if not st_name:
@@ -175,12 +177,12 @@ def sync_device_tags_from_site(device):
         if ':' in st_name:
             st_key, _ = st_name.split(':', 1)
             st_key_clean = st_key.strip().lower()
-            # If device has existing tag with same key but different value, remove it
+            # If device has existing tag with same key but different value (and not in current site tags), remove it
             for dt in cur_dev_tags:
                 dt_name = getattr(dt, 'name', str(dt)).strip()
                 if ':' in dt_name:
                     dt_key, _ = dt_name.split(':', 1)
-                    if dt_key.strip().lower() == st_key_clean and dt_name != st_name:
+                    if dt_key.strip().lower() == st_key_clean and dt_name != st_name and dt_name not in site_tag_names:
                         if dt not in tags_to_remove:
                             tags_to_remove.append(dt)
 
@@ -246,7 +248,7 @@ def sync_site_tags_to_devices(site, old_tags=None):
                         dt_name = getattr(dt, 'name', str(dt)).strip()
                         if ':' in dt_name:
                             dt_key, _ = dt_name.split(':', 1)
-                            if dt_key.strip().lower() == st_key_clean and dt_name != st_name:
+                            if dt_key.strip().lower() == st_key_clean and dt_name != st_name and dt_name not in cur_tag_names:
                                 if dt not in tags_to_remove:
                                     tags_to_remove.append(dt)
 
@@ -283,42 +285,67 @@ def sync_site_tags_to_devices(site, old_tags=None):
 def build_zabbix_tags(device):
     """
     Extract tags from device's site and device itself for Zabbix host tags.
+    Fully supports multiple tags per device and site.
     If tag name is in format 'Key:Value' (e.g. 'IMU:Attariya'),
     maps to {'tag': 'IMU', 'value': 'Attariya'}.
     If tag name has no colon, maps to {'tag': tag_name, 'value': ''}.
     Authoritative order: site tags first, then device tags.
-    Deduplicates by tag key so conflicting values for the same key are avoided.
+    Deduplicates exact (tag, value) pairs so Zabbix API does not reject duplicates.
+    If site has a tag with the same key (e.g. 'IMU:Jumla'), it takes precedence over
+    stale device tags with that key (e.g. 'IMU:Attariya').
     """
     tags_payload = []
-    seen_keys = set()
+    seen_exact = set()
+    site_keys = set()
 
-    tags_sources = []
     site = getattr(device, 'site', None)
-    if site and hasattr(site, 'tags'):
-        tags_sources.extend(list(site.tags.all()))
-    if hasattr(device, 'tags'):
-        tags_sources.extend(list(device.tags.all()))
+    site_tags = list(site.tags.all()) if (site and hasattr(site, 'tags')) else []
+    dev_tags = list(device.tags.all()) if hasattr(device, 'tags') else []
 
-    for tag_obj in tags_sources:
-        tag_name_str = getattr(tag_obj, 'name', str(tag_obj)).strip()
-        if not tag_name_str:
+    # 1. Process all Site tags
+    for tag_obj in site_tags:
+        tag_str = getattr(tag_obj, 'name', str(tag_obj)).strip()
+        if not tag_str:
             continue
 
-        if ':' in tag_name_str:
-            t_key, t_val = tag_name_str.split(':', 1)
-            t_key = t_key.strip()
-            t_val = t_val.strip()
+        if ':' in tag_str:
+            t_key, t_val = tag_str.split(':', 1)
+            t_key, t_val = t_key.strip(), t_val.strip()
         else:
-            t_key = tag_name_str
-            t_val = ""
+            t_key, t_val = tag_str, ""
 
         if not t_key:
             continue
 
-        k_lower = t_key.lower()
-        if k_lower in seen_keys:
+        pair = (t_key.lower(), t_val.lower())
+        if pair not in seen_exact:
+            seen_exact.add(pair)
+            site_keys.add(t_key.lower())
+            tags_payload.append({"tag": t_key, "value": t_val})
+
+    # 2. Process all Device tags (override only if site defined a conflicting value for that key)
+    for tag_obj in dev_tags:
+        tag_str = getattr(tag_obj, 'name', str(tag_obj)).strip()
+        if not tag_str:
             continue
-        seen_keys.add(k_lower)
+
+        if ':' in tag_str:
+            t_key, t_val = tag_str.split(':', 1)
+            t_key, t_val = t_key.strip(), t_val.strip()
+        else:
+            t_key, t_val = tag_str, ""
+
+        if not t_key:
+            continue
+
+        pair = (t_key.lower(), t_val.lower())
+        if pair in seen_exact:
+            continue
+        # If site already defined a tag with this key and a different value, site tag has precedence
+        if t_key.lower() in site_keys and ':' in tag_str:
+            continue
+
+        seen_exact.add(pair)
         tags_payload.append({"tag": t_key, "value": t_val})
 
     return tags_payload

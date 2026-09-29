@@ -768,10 +768,12 @@ class ZabbixHostsView(PermissionRequiredMixin, View):
 
             # Check 5: Tags Check
             if not is_mismatch:
-                expected_tag_strings = site_tags_map.get(d.get('site_id'), []) + dev_tags_map.get(d['id'], [])
+                site_t_list = site_tags_map.get(d.get('site_id'), [])
+                dev_t_list = dev_tags_map.get(d['id'], [])
                 expected_tag_tuples = set()
-                seen_k = set()
-                for t_str in expected_tag_strings:
+                site_k_set = set()
+
+                for t_str in site_t_list:
                     t_str = t_str.strip()
                     if not t_str:
                         continue
@@ -780,9 +782,21 @@ class ZabbixHostsView(PermissionRequiredMixin, View):
                         k, v = k.strip().lower(), v.strip().lower()
                     else:
                         k, v = t_str.lower(), ""
-                    if k not in seen_k:
-                        seen_k.add(k)
-                        expected_tag_tuples.add((k, v))
+                    site_k_set.add(k)
+                    expected_tag_tuples.add((k, v))
+
+                for t_str in dev_t_list:
+                    t_str = t_str.strip()
+                    if not t_str:
+                        continue
+                    if ':' in t_str:
+                        k, v = t_str.split(':', 1)
+                        k, v = k.strip().lower(), v.strip().lower()
+                    else:
+                        k, v = t_str.lower(), ""
+                    if k in site_k_set and (k, v) not in expected_tag_tuples and ':' in t_str:
+                        continue
+                    expected_tag_tuples.add((k, v))
 
                 z_tag_tuples = set(
                     (t.get('tag', '').strip().lower(), t.get('value', '').strip().lower())
