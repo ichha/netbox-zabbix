@@ -591,6 +591,8 @@ def sync_device_role_to_zabbix_on_delete(sender, instance, **kwargs):
 # DEVICE REAL-TIME SYNC SIGNALS
 # ==========================================
 
+from django.db import transaction
+
 @receiver(post_save, sender=Device)
 def sync_device_to_zabbix_on_save(sender, instance, created, raw=False, **kwargs):
     """
@@ -603,18 +605,22 @@ def sync_device_to_zabbix_on_save(sender, instance, created, raw=False, **kwargs
     if is_sync_paused():
         logger.info(f"[Zabbix Signal] Skipping '{instance.name}' — auto-sync is paused.")
         return
-    try:
-        sync_device_tags_from_site(instance)
-    except Exception as e:
-        logger.debug(f"[Zabbix Signal] Error syncing site tags to device: {e}")
-    try:
-        from .models import ZabbixSyncState
-        if not ZabbixSyncState.is_enabled():
-            logger.info(f"[Zabbix Signal] Auto-sync disabled. Skipping '{instance.name}'.")
-            return
-    except Exception:
-        pass
-    push_device_to_zabbix(instance, reason="Device saved in NetBox")
+
+    device_id = instance.pk
+
+    def _do_device_sync():
+        try:
+            dev = Device.objects.get(pk=device_id)
+            sync_device_tags_from_site(dev)
+            from .models import ZabbixSyncState
+            if not ZabbixSyncState.is_enabled():
+                logger.info(f"[Zabbix Signal] Auto-sync disabled. Skipping '{dev.name}'.")
+                return
+            push_device_to_zabbix(dev, reason="Device saved in NetBox")
+        except Exception as e:
+            logger.error(f"[Zabbix Signal Error] Failed to sync device on commit: {e}")
+
+    transaction.on_commit(_do_device_sync)
 
 
 @receiver(post_delete, sender=Device)
@@ -671,8 +677,17 @@ def site_pre_save(sender, instance, **kwargs):
 def site_post_save(sender, instance, created, raw=False, **kwargs):
     if raw or is_tag_syncing():
         return
+    site_id = instance.pk
     old_tags = getattr(instance, '_old_tags', None)
-    sync_site_tags_to_devices(instance, old_tags=old_tags)
+
+    def _do_site_sync():
+        try:
+            fresh_site = Site.objects.get(pk=site_id)
+            sync_site_tags_to_devices(fresh_site, old_tags=old_tags)
+        except Exception as e:
+            logger.error(f"[Zabbix Signal Error] Failed to sync site tags on commit: {e}")
+
+    transaction.on_commit(_do_site_sync)
 
 
 try:
