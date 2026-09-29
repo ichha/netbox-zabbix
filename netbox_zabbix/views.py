@@ -1677,17 +1677,50 @@ class ZabbixBulkPushTagsView(PermissionRequiredMixin, View):
         if not matching_sites:
             return JsonResponse({'success': False, 'error': f"No sites found for district '{target_lbl}'."})
 
+        action = request.POST.get('action', 'push')
+
+        # Option A: Get District Summary for Chunked Progress Bar
+        if action == 'get_district_summary':
+            devices_qs = Device.objects.filter(site__in=matching_sites).values('id', 'name')
+            device_list = [{'id': d['id'], 'name': d['name']} for d in devices_qs if d['name']]
+            tags_set = set()
+            for s in matching_sites:
+                for t in s.tags.all():
+                    t_name = getattr(t, 'name', str(t)).strip()
+                    if t_name:
+                        tags_set.add(t_name)
+
+            return JsonResponse({
+                'success': True,
+                'district': target_lbl,
+                'choice_value': target_val,
+                'total': len(device_list),
+                'devices': device_list,
+                'tags': sorted(list(tags_set))
+            })
+
+        # Fetch specified devices (batch) or ALL devices in matching sites
+        device_ids_raw = request.POST.get('device_ids')
+        if device_ids_raw:
+            try:
+                import json
+                device_ids = json.loads(device_ids_raw)
+            except Exception:
+                device_ids = [int(x) for x in device_ids_raw.split(',') if x.strip().isdigit()]
+            devices = list(Device.objects.filter(id__in=device_ids).select_related('site').prefetch_related('site__tags', 'tags'))
+        else:
+            devices = list(Device.objects.filter(site__in=matching_sites).select_related('site').prefetch_related('site__tags', 'tags'))
+
+        if not devices:
+            return JsonResponse({'success': False, 'error': f"No devices found in district '{target_lbl}'."})
+
         # Step 1: Ensure site tags are synchronized to NetBox devices
-        for site in matching_sites:
+        target_sites = list({d.site for d in devices if d.site}) if device_ids_raw else matching_sites
+        for site in target_sites:
             try:
                 sync_site_tags_to_devices(site)
             except Exception as e:
                 logger.debug(f"Error syncing site tags: {e}")
-
-        # Step 2: Fetch all devices in these sites
-        devices = list(Device.objects.filter(site__in=matching_sites).select_related('site').prefetch_related('site__tags', 'tags'))
-        if not devices:
-            return JsonResponse({'success': False, 'error': f"No devices found in district '{target_lbl}'."})
 
         # Step 3: Fetch existing Zabbix hosts for these devices
         api = ZabbixAPI()
